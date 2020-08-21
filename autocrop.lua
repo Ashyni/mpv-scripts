@@ -49,10 +49,6 @@ detect_round: number[2^n] -  The value which the width/height
     you can try to set it to 4 or 16.
     See round of https://ffmpeg.org/ffmpeg-filters.html#cropdetect
 
-detect_min_ratio: number[0.0-1.0] - The ratio of the minimum clip
-    size to the original. If the picture is over cropped or under
-    cropped, try adjusting this value.
-
 detect_seconds: seconds - How long to gather cropdetect data.
     Increasing this may be desirable to allow cropdetect more
     time to collect data.
@@ -73,7 +69,7 @@ local options = {
     fixed_width = true,
     ignore_small_heigth = true,
     -- cropdetect
-    detect_limit = "24/255",
+    detect_limit = 24,
     detect_round = 2,
     detect_seconds = 0.5,
     reset = 0
@@ -171,7 +167,7 @@ function auto_crop()
 
     mp.command(
         string.format(
-            "no-osd vf pre @%s:cropdetect=limit=%s:round=%d:reset=%d",
+            "no-osd vf pre @%s:cropdetect=limit=%d/255:round=%d:reset=%d",
             labels.cropdetect,
             limit_adjust,
             round,
@@ -228,40 +224,38 @@ function auto_crop()
             end
 
             -- Debug crop detect raw value
-            mp.msg.debug(string.format("pre-filter-crop=w=%s:h=%s:x=%s:y=%s", meta.w, meta.h, meta.x, meta.y))
+            mp.msg.info(string.format("pre-filter-crop=w=%s:h=%s:x=%s:y=%s", meta.w, meta.h, meta.x, meta.y))
 
-            -- Detect Dark scene, adjust limit cropdetect
-            local dark_scene =
+            -- Detect dark scene, adjust cropdetect limit
+            -- between 0 and detect_limit
+            local light_scene =
                 (meta.x >= (meta.max_w_pixel - meta.w) / 2 and meta.x <= (meta.max_w - meta.w) / 2) and
                 (meta.y >= (meta.max_h_pixel - meta.h) / 2 and meta.y <= (meta.max_h - meta.h) / 2)
 
-            local limit_adjust_number = tonumber(string.match(limit_adjust, "(%d+)/255"))
-            local limit_number = tonumber(string.match(limit, "(%d+)/255"))
-            local limit_adjust_by = (limit_adjust_number - limit_adjust_number % 10) / 10
+            -- Scale adjustement on detect_limit, min 1
+            local limit_adjust_by = (limit_adjust - limit_adjust % 10) / 10
             if limit_adjust_by == 0 then
                 limit_adjust_by = 1
             end
 
-            if not dark_scene then
-                if limit_adjust_number - limit_adjust_by >= limit_adjust_by then
-                    limit_adjust_number = limit_adjust_number - limit_adjust_by
-                    limit_adjust = string.format("%d/255", limit_adjust_number)
+            if not light_scene then
+                if limit_adjust - limit_adjust_by >= limit_adjust_by then
+                    limit_adjust = limit_adjust - limit_adjust_by
                 else
-                    limit_adjust = "0/255"
+                    limit_adjust = 0
                 end
                 -- Debug limit_adjust change
-                mp.msg.debug(string.format("limit_adjust=%s", limit_adjust))
+                mp.msg.info(string.format("limit_adjust=%s", limit_adjust))
                 return
             else
-                if limit_adjust_number < limit_number then
-                    if limit_adjust_number + limit_adjust_by * 2 <= limit_number then
-                        limit_adjust_number = limit_adjust_number + limit_adjust_by * 2
-                        limit_adjust = string.format("%d/255", limit_adjust_number)
+                if limit_adjust < limit then
+                    if limit_adjust + limit_adjust_by * 2 <= limit then
+                        limit_adjust = limit_adjust + limit_adjust_by * 2
                     else
                         limit_adjust = limit
                     end
                     -- Debug limit_adjust change
-                    mp.msg.debug(string.format("limit_adjust=%s", limit_adjust))
+                    mp.msg.info(string.format("limit_adjust=%s", limit_adjust))
                 end
             end
 
