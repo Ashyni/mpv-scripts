@@ -29,22 +29,19 @@ script-opts-append=autocrop-<parameter>=<value> into mpv.conf
 
 List of available parameters (For default values, see <options>)：
 
-auto: bool - Whether to automatically apply crop at the start of
-    playback. If you don't want to crop automatically, set it to
+auto: bool - Whether to automatically apply crop periodicly. 
+    If you want a single crop at start, set it to
     false or add "script-opts-append=autocrop-auto=no" into
     mpv.conf.
 
 auto_delay: seconds - Delay before starting crop in auto mode.
-    You can try to increase this value to avoid dark scene or
-    fade in at beginning. Automatic cropping will not occur if
-    the value is larger than the remaining playback time.
 
 detect_limit: number[0-255] - Black threshold for cropdetect.
     Smaller values will generally result in less cropping.
     See limit of https://ffmpeg.org/ffmpeg-filters.html#cropdetect
 
 detect_round: number[2^n] -  The value which the width/height
-    should be divisible by. Smaller values ​​have better detection
+    should be divisible by. Smaller values have better detection
     accuracy. If you have problems with other filters,
     you can try to set it to 4 or 16.
     See round of https://ffmpeg.org/ffmpeg-filters.html#cropdetect
