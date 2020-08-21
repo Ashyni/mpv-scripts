@@ -224,7 +224,7 @@ function auto_crop()
             end
 
             -- Debug crop detect raw value
-            mp.msg.info(string.format("pre-filter-crop=w=%s:h=%s:x=%s:y=%s", meta.w, meta.h, meta.x, meta.y))
+            mp.msg.debug(string.format("pre-filter-crop=w=%s:h=%s:x=%s:y=%s", meta.w, meta.h, meta.x, meta.y))
 
             -- Detect dark scene, adjust cropdetect limit
             -- between 0 and detect_limit
@@ -245,7 +245,7 @@ function auto_crop()
                     limit_adjust = 0
                 end
                 -- Debug limit_adjust change
-                mp.msg.info(string.format("limit_adjust=%s", limit_adjust))
+                mp.msg.debug(string.format("limit_adjust=%s", limit_adjust))
                 return
             else
                 if limit_adjust < limit then
@@ -255,7 +255,7 @@ function auto_crop()
                         limit_adjust = limit
                     end
                     -- Debug limit_adjust change
-                    mp.msg.info(string.format("limit_adjust=%s", limit_adjust))
+                    mp.msg.debug(string.format("limit_adjust=%s", limit_adjust))
                 end
             end
 
