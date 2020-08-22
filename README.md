@@ -20,7 +20,7 @@ Detect dark scene and auto adjust detect_limit.
 
 Auto pause the script when seeking/loading.
 
-## Shortcut 
+### Shortcut 
 
 SHIFT+C do:
 
