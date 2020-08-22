@@ -68,7 +68,7 @@ local options = {
     -- cropdetect
     detect_limit = 24,
     detect_round = 2,
-    detect_seconds = 0.5,
+    detect_seconds = 1,
     reset = 0
 }
 read_options(options)
@@ -225,9 +225,9 @@ function auto_crop()
 
             -- Detect dark scene, adjust cropdetect limit
             -- between 0 and detect_limit
-            local light_scene =
-                (meta.x >= (meta.max_w_pixel - meta.w) / 2 and meta.x <= (meta.max_w - meta.w) / 2) and
-                (meta.y >= (meta.max_h_pixel - meta.h) / 2 and meta.y <= (meta.max_h - meta.h) / 2)
+            local dark_scene =
+                (meta.y >= (meta.max_h_pixel - meta.h) / 2 and meta.y <= (meta.max_h - meta.h) / 2) or 
+                (meta.x >= (meta.max_w_pixel - meta.w) / 2 and meta.x <= (meta.max_w - meta.w) / 2)
 
             -- Scale adjustement on detect_limit, min 1
             local limit_adjust_by = (limit_adjust - limit_adjust % 10) / 10
@@ -235,7 +235,7 @@ function auto_crop()
                 limit_adjust_by = 1
             end
 
-            if not light_scene then
+            if not dark_scene then
                 if limit_adjust - limit_adjust_by >= limit_adjust_by then
                     limit_adjust = limit_adjust - limit_adjust_by
                 else
@@ -265,8 +265,8 @@ function auto_crop()
             local crop_filter =
                 (meta.h ~= meta_last.h or meta.w ~= meta_last.w or meta.x ~= meta_last.x or meta.y ~= meta_last.y) and
                 meta.h >= meta.max_w / options.max_aspect_ratio and
-                meta.w >= meta.max_w_pixel and
-                (meta.x >= (meta.max_w_pixel - meta.w) / 2 and meta.x <= (meta.max_w - meta.w) / 2) and
+                (meta.w >= meta.max_w_pixel or options.fixed_width) and
+                (meta.x >= (meta.max_w_pixel - meta.w) / 2 and meta.x <= (meta.max_w - meta.w) / 2 or options.fixed_width) and
                 (meta.y >= (meta.max_h_pixel - meta.h) / 2 and meta.y <= (meta.max_h - meta.h) / 2) and
                 (not options.fixed_width or options.fixed_width and meta.h ~= meta_last.h) and
                 (not options.ignore_small_heigth or
@@ -336,7 +336,7 @@ function on_start()
         function()
             -- Run periodic or once.
             if options.auto then
-                local time_needed = options.periodic_timer + options.detect_seconds + 0.1
+                local time_needed = options.periodic_timer + options.detect_seconds
                 -- Verify if there is enough time for autocrop.
                 if is_enough_time(time_needed) then
                     return
