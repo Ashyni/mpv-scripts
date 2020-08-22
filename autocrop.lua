@@ -34,7 +34,7 @@ auto: bool - Whether to automatically apply crop periodicly.
     false or add "script-opts-append=autocrop-auto=no" into
     mpv.conf.
 
-auto_delay: seconds - Delay before starting crop in auto mode.
+periodic_timer: seconds - Delay before starting crop in auto mode.
 
 detect_limit: number[0-255] - Black threshold for cropdetect.
     Smaller values will generally result in less cropping.
@@ -56,13 +56,13 @@ require "mp.options"
 local options = {
     enable = true,
     auto = true,
-    auto_delay = 0,
+    periodic_timer = 0,
     start_delay = 0,
     -- crop behavior
-    detect_min_aspect_ratio = 16 / 9,
-    detect_max_aspect_ratio = 22 / 9,
-    detect_max_w_pixel = 8,
-    detect_max_h_pixel = 8,
+    min_aspect_ratio = 16 / 9,
+    max_aspect_ratio = 22 / 9,
+    width_pixel_tolerance = 8,
+    height_pixel_tolerance = 8,
     fixed_width = true,
     ignore_small_heigth = true,
     -- cropdetect
@@ -209,8 +209,8 @@ function auto_crop()
                     h = tonumber(meta.h),
                     x = tonumber(meta.x),
                     y = tonumber(meta.y),
-                    max_w_pixel = width - options.detect_max_w_pixel,
-                    max_h_pixel = height - options.detect_max_h_pixel,
+                    max_w_pixel = width - options.width_pixel_tolerance,
+                    max_h_pixel = height - options.height_pixel_tolerance,
                     max_w = width,
                     max_h = height
                 }
@@ -264,15 +264,15 @@ function auto_crop()
             -- Prevent small heigh change.
             local crop_filter =
                 (meta.h ~= meta_last.h or meta.w ~= meta_last.w or meta.x ~= meta_last.x or meta.y ~= meta_last.y) and
-                meta.h >= meta.max_w / options.detect_max_aspect_ratio and
+                meta.h >= meta.max_w / options.max_aspect_ratio and
                 meta.w >= meta.max_w_pixel and
                 (meta.x >= (meta.max_w_pixel - meta.w) / 2 and meta.x <= (meta.max_w - meta.w) / 2) and
                 (meta.y >= (meta.max_h_pixel - meta.h) / 2 and meta.y <= (meta.max_h - meta.h) / 2) and
                 (not options.fixed_width or options.fixed_width and meta.h ~= meta_last.h) and
                 (not options.ignore_small_heigth or
                     options.ignore_small_heigth and
-                        (meta.h > meta_last.h + options.detect_max_h_pixel or
-                            meta.h < meta_last.h - options.detect_max_h_pixel))
+                        (meta.h > meta_last.h + options.height_pixel_tolerance or
+                            meta.h < meta_last.h - options.height_pixel_tolerance))
 
             if crop_filter then
                 if options.fixed_width then
@@ -323,7 +323,7 @@ function on_start()
     elseif not is_cropable() then
         mp.msg.warn("Only works for videos.")
         return
-    elseif options.detect_min_aspect_ratio < width / height then
+    elseif options.min_aspect_ratio < width / height then
         mp.msg.info("Disable script, AR > min_aspect_ratio.")
         return
     end
@@ -336,12 +336,12 @@ function on_start()
         function()
             -- Run periodic or once.
             if options.auto then
-                local time_needed = options.auto_delay + options.detect_seconds + 0.1
+                local time_needed = options.periodic_timer + options.detect_seconds + 0.1
                 -- Verify if there is enough time for autocrop.
                 if is_enough_time(time_needed) then
                     return
                 end
-                timers.auto_delay = mp.add_periodic_timer(time_needed, auto_crop)
+                timers.periodic_timer = mp.add_periodic_timer(time_needed, auto_crop)
             else
                 auto_crop()
             end
@@ -354,7 +354,7 @@ function on_toggle()
         auto_crop()
         mp.osd_message("Autocrop once.", 3)
     else
-        if timers.auto_delay:is_enabled() then
+        if timers.periodic_timer:is_enabled() then
             seek()
             init_size()
             mp.osd_message("Autocrop paused.", 3)
@@ -370,11 +370,11 @@ function on_toggle()
 end
 
 function seek(log)
-    if timers.auto_delay and timers.auto_delay:is_enabled() then
+    if timers.periodic_timer and timers.periodic_timer:is_enabled() then
         if log ~= false then
             mp.msg.warn("Seek.")
         end
-        timers.auto_delay:kill()
+        timers.periodic_timer:kill()
         if timers.crop_detect and timers.crop_detect:is_enabled() then
             timers.crop_detect:kill()
         end
@@ -382,11 +382,11 @@ function seek(log)
 end
 
 function resume(log)
-    if timers.auto_delay and not timers.auto_delay:is_enabled() then
+    if timers.periodic_timer and not timers.periodic_timer:is_enabled() then
         if log ~= false then
             mp.msg.warn("Resume.")
         end
-        timers.auto_delay:resume()
+        timers.periodic_timer:resume()
     end
 end
 
