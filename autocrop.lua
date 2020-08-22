@@ -66,7 +66,7 @@ local options = {
     fixed_width = true,
     ignore_small_heigth = true,
     -- cropdetect
-    detect_limit_min = 18,
+    detect_limit_min = 16,
     detect_limit = 24,
     detect_round = 2,
     detect_seconds = 0.4,
@@ -233,6 +233,7 @@ function auto_crop()
 
             -- Scale adjustement on detect_limit, min 1
             local limit_adjust_by = (limit_adjust - limit_adjust % 10) / 10
+            local limit_adjust_by = ((limit_adjust - limit_adjust_by) - (limit_adjust - limit_adjust_by) % 10) / 10
             if limit_adjust_by == 0 then
                 limit_adjust_by = 1
             end
@@ -274,11 +275,10 @@ function auto_crop()
             local crop_filter =
                 (meta.h ~= meta_last.h or meta.w ~= meta_last.w or meta.x ~= meta_last.x or meta.y ~= meta_last.y) and
                 meta.h >= meta.max_w / options.max_aspect_ratio and
-                (meta.w >= meta.max_w_pixel) --[[  or options.fixed_width ]] and
+                meta.w >= meta.max_w_pixel and
                 (meta.x >= (meta.max_w_pixel - meta.w) / 2 and meta.x <= (meta.max_w - meta.w) / 2 or
                     options.fixed_width) and
                 (meta.y >= (meta.max_h_pixel - meta.h) / 2 and meta.y <= (meta.max_h - meta.h) / 2) and
-                --[[ (not options.fixed_width or options.fixed_width and meta.h ~= meta_last.h) and ]]
                 (not options.ignore_small_heigth or
                     options.ignore_small_heigth and
                         (meta.h > meta_last.h + options.height_pixel_tolerance or
