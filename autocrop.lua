@@ -56,7 +56,7 @@ require "mp.options"
 local options = {
     enable = true,
     auto = true,
-    periodic_timer = 0,
+    periodic_timer = 0.1,
     start_delay = 0,
     -- crop behavior
     min_aspect_ratio = 16 / 9,
@@ -68,7 +68,7 @@ local options = {
     -- cropdetect
     detect_limit = 24,
     detect_round = 2,
-    detect_seconds = 1,
+    detect_seconds = 0.4,
     reset = 0
 }
 read_options(options)
@@ -119,9 +119,7 @@ end
 function remove_filter(label)
     if is_filter_present(label) then
         mp.command(string.format("no-osd vf remove @%s", label))
-        return true
     end
-    return false
 end
 
 function init_size()
@@ -222,11 +220,14 @@ function auto_crop()
 
             -- Debug crop detect raw value
             mp.msg.debug(string.format("pre-filter-crop=w=%s:h=%s:x=%s:y=%s", meta.w, meta.h, meta.x, meta.y))
+            mp.msg.debug(
+                string.format("last-crop=w=%s:h=%s:x=%s:y=%s", meta_last.w, meta_last.h, meta_last.x, meta_last.y)
+            )
 
             -- Detect dark scene, adjust cropdetect limit
             -- between 0 and detect_limit
             local dark_scene =
-                (meta.y >= (meta.max_h_pixel - meta.h) / 2 and meta.y <= (meta.max_h - meta.h) / 2) or 
+                (meta.y >= (meta.max_h_pixel - meta.h) / 2 and meta.y <= (meta.max_h - meta.h) / 2) or
                 (meta.x >= (meta.max_w_pixel - meta.w) / 2 and meta.x <= (meta.max_w - meta.w) / 2)
 
             -- Scale adjustement on detect_limit, min 1
@@ -262,24 +263,25 @@ function auto_crop()
             -- Prevent asymmetric crop with slight tolerance.
             -- Prevent small width change.
             -- Prevent small heigh change.
+            if options.fixed_width then
+                meta.w = meta.max_w
+                meta.x = 0
+            end
+
             local crop_filter =
                 (meta.h ~= meta_last.h or meta.w ~= meta_last.w or meta.x ~= meta_last.x or meta.y ~= meta_last.y) and
                 meta.h >= meta.max_w / options.max_aspect_ratio and
-                (meta.w >= meta.max_w_pixel or options.fixed_width) and
-                (meta.x >= (meta.max_w_pixel - meta.w) / 2 and meta.x <= (meta.max_w - meta.w) / 2 or options.fixed_width) and
+                (meta.w >= meta.max_w_pixel) --[[  or options.fixed_width ]] and
+                (meta.x >= (meta.max_w_pixel - meta.w) / 2 and meta.x <= (meta.max_w - meta.w) / 2 or
+                    options.fixed_width) and
                 (meta.y >= (meta.max_h_pixel - meta.h) / 2 and meta.y <= (meta.max_h - meta.h) / 2) and
-                (not options.fixed_width or options.fixed_width and meta.h ~= meta_last.h) and
+                --[[ (not options.fixed_width or options.fixed_width and meta.h ~= meta_last.h) and ]]
                 (not options.ignore_small_heigth or
                     options.ignore_small_heigth and
                         (meta.h > meta_last.h + options.height_pixel_tolerance or
                             meta.h < meta_last.h - options.height_pixel_tolerance))
 
             if crop_filter then
-                if options.fixed_width then
-                    meta.w = meta.max_w
-                    meta.x = 0
-                end
-
                 -- Remove existing crop.
                 remove_filter(labels.crop)
                 -- Apply crop.
@@ -295,7 +297,7 @@ function auto_crop()
                 )
 
                 --Debug apply crop
-                mp.msg.debug(string.format("apply-crop=w=%s:h=%s:x=%s:y=%s", meta.w, meta.h, meta.x, meta.y))
+                mp.msg.info(string.format("apply-crop=w=%s:h=%s:x=%s:y=%s", meta.w, meta.h, meta.x, meta.y))
 
                 -- Save values to compare later.
                 meta_last = {
@@ -357,11 +359,9 @@ function on_toggle()
         if timers.periodic_timer:is_enabled() then
             seek()
             init_size()
+            remove_filter(labels.crop)
+            remove_filter(labels.cropdetect)
             mp.osd_message("Autocrop paused.", 3)
-            -- Cropped => Remove it.
-            if remove_filter(labels.crop) then
-                return
-            end
         else
             resume()
             mp.osd_message("Autocrop resumed.", 3)
@@ -406,7 +406,7 @@ function pause(_, bool)
     end
 end
 
-mp.observe_property("pause", "bool", pause)
 mp.add_key_binding("C", "toggle_crop", on_toggle)
+mp.observe_property("pause", "bool", pause)
 mp.register_event("end-file", cleanup)
 mp.register_event("file-loaded", on_start)
