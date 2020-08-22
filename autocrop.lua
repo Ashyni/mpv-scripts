@@ -60,7 +60,7 @@ local options = {
     start_delay = 0,
     -- crop behavior
     min_aspect_ratio = 16 / 9,
-    max_aspect_ratio = 22 / 9,
+    max_aspect_ratio = 21.6 / 9,
     width_pixel_tolerance = 8,
     height_pixel_tolerance = 8,
     fixed_width = true,
