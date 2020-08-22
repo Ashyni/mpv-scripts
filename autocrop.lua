@@ -66,6 +66,7 @@ local options = {
     fixed_width = true,
     ignore_small_heigth = true,
     -- cropdetect
+    detect_limit_min = 18,
     detect_limit = 24,
     detect_round = 2,
     detect_seconds = 0.4,
@@ -219,7 +220,7 @@ function auto_crop()
             end
 
             -- Debug crop detect raw value
-            mp.msg.debug(string.format("pre-filter-crop=w=%s:h=%s:x=%s:y=%s", meta.w, meta.h, meta.x, meta.y))
+            mp.msg.debug(string.format("raw-crop=w=%s:h=%s:x=%s:y=%s", meta.w, meta.h, meta.x, meta.y))
             mp.msg.debug(
                 string.format("last-crop=w=%s:h=%s:x=%s:y=%s", meta_last.w, meta_last.h, meta_last.x, meta_last.y)
             )
@@ -237,14 +238,16 @@ function auto_crop()
             end
 
             if not dark_scene then
-                if limit_adjust - limit_adjust_by >= limit_adjust_by then
-                    limit_adjust = limit_adjust - limit_adjust_by
-                else
-                    limit_adjust = 0
+                if limit_adjust > options.detect_limit_min then
+                    if limit_adjust - limit_adjust_by >= options.detect_limit_min then
+                        limit_adjust = limit_adjust - limit_adjust_by
+                    else
+                        limit_adjust = options.detect_limit_min
+                    end
+                    -- Debug limit_adjust change
+                    mp.msg.debug(string.format("limit_adjust=%s", limit_adjust))
+                    return
                 end
-                -- Debug limit_adjust change
-                mp.msg.debug(string.format("limit_adjust=%s", limit_adjust))
-                return
             else
                 if limit_adjust < limit then
                     if limit_adjust + limit_adjust_by * 2 <= limit then
