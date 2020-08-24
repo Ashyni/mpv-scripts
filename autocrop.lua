@@ -222,10 +222,6 @@ function auto_crop()
                     h = tonumber(meta.detect_current.h),
                     x = tonumber(meta.detect_current.x),
                     y = tonumber(meta.detect_current.y)
-                    --[[ max_w_pixel = width - options.width_pixel_tolerance,
-                    max_h_pixel = height - options.height_pixel_tolerance,
-                    max_w = width,
-                    max_h = height ]]
                 }
             else
                 mp.msg.error("Got empty crop data.")
