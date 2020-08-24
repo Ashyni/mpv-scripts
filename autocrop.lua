@@ -49,6 +49,8 @@ detect_round: number[2^n] -  The value which the width/height
 detect_seconds: seconds - How long to gather cropdetect data.
     Increasing this may be desirable to allow cropdetect more
     time to collect data.
+
+xxx_aspect_ratio: [21.6/9] or [2.4]
 --]]
 require "mp.msg"
 require "mp.options"
@@ -64,7 +66,7 @@ local options = {
     width_pixel_tolerance = 8,
     height_pixel_tolerance = 8,
     fixed_width = true,
-    ignore_small_heigth = true,
+    ignore_small_height = true,
     -- cropdetect
     detect_limit_min = 16,
     detect_limit = 24,
@@ -81,8 +83,14 @@ local labels = {
 }
 local limit_adjust = options.detect_limit
 local timers = {}
-local meta = {}
-local meta_last = {}
+
+-- Multi-Dimensional Array metadata
+meta = {}
+key1 = {"size_origin","size_crop","apply_current","apply_last","detect_current","detect_last"}
+key2 = {"w","h","x","y"}
+for k,v in pairs(key1) do
+    meta[v] = {key2}
+end
 
 function native_width_height()
     local width = mp.get_property_native("width")
@@ -125,12 +133,18 @@ end
 
 function init_size()
     local width, height = native_width_height()
-    meta_last = {
+    meta.size_origin = {
         w = width,
         h = height,
         x = 0,
         y = 0
     }
+    meta.apply_current = meta.size_origin
+    meta.size_crop = {
+        w = width - options.width_pixel_tolerance,
+        h = height - options.height_pixel_tolerance,
+    }
+    
 end
 
 function cleanup()
@@ -187,7 +201,7 @@ function auto_crop()
 
             -- Verify the existence of metadata.
             if cropdetect_metadata then
-                meta = {
+                meta.detect_current = {
                     w = cropdetect_metadata["lavfi.cropdetect.w"],
                     h = cropdetect_metadata["lavfi.cropdetect.h"],
                     x = cropdetect_metadata["lavfi.cropdetect.x"],
@@ -201,17 +215,17 @@ function auto_crop()
             end
 
             -- Verify that the metadata meets the requirements and convert it.
-            if meta.w and meta.h and meta.x and meta.y then
+            if meta.detect_current.w and meta.detect_current.h and meta.detect_current.x and meta.detect_current.y then
                 local width, height = native_width_height()
-                meta = {
-                    w = tonumber(meta.w),
-                    h = tonumber(meta.h),
-                    x = tonumber(meta.x),
-                    y = tonumber(meta.y),
-                    max_w_pixel = width - options.width_pixel_tolerance,
+                meta.detect_current = {
+                    w = tonumber(meta.detect_current.w),
+                    h = tonumber(meta.detect_current.h),
+                    x = tonumber(meta.detect_current.x),
+                    y = tonumber(meta.detect_current.y)
+                    --[[ max_w_pixel = width - options.width_pixel_tolerance,
                     max_h_pixel = height - options.height_pixel_tolerance,
                     max_w = width,
-                    max_h = height
+                    max_h = height ]]
                 }
             else
                 mp.msg.error("Got empty crop data.")
@@ -220,16 +234,16 @@ function auto_crop()
             end
 
             -- Debug crop detect raw value
-            mp.msg.debug(string.format("raw-crop=w=%s:h=%s:x=%s:y=%s", meta.w, meta.h, meta.x, meta.y))
+            mp.msg.debug(string.format("raw-crop=w=%s:h=%s:x=%s:y=%s", meta.detect_current.w, meta.detect_current.h, meta.detect_current.x, meta.detect_current.y))
             mp.msg.debug(
-                string.format("last-crop=w=%s:h=%s:x=%s:y=%s", meta_last.w, meta_last.h, meta_last.x, meta_last.y)
+                string.format("last-crop=w=%s:h=%s:x=%s:y=%s", meta.apply_current.w, meta.apply_current.h, meta.apply_current.x, meta.apply_current.y)
             )
 
             -- Detect dark scene, adjust cropdetect limit
             -- between 0 and detect_limit
             local dark_scene =
-                (meta.y >= (meta.max_h_pixel - meta.h) / 2 and meta.y <= (meta.max_h - meta.h) / 2) or
-                (meta.x >= (meta.max_w_pixel - meta.w) / 2 and meta.x <= (meta.max_w - meta.w) / 2)
+                (meta.detect_current.y >= (meta.size_crop.h - meta.detect_current.h) / 2 and meta.detect_current.y <= (meta.size_origin.h - meta.detect_current.h) / 2) or
+                (meta.detect_current.x >= (meta.size_crop.w - meta.detect_current.w) / 2 and meta.detect_current.x <= (meta.size_origin.w - meta.detect_current.w) / 2)
 
             -- Scale adjustement on detect_limit, min 1
             local limit_adjust_by = (limit_adjust - limit_adjust % 10) / 10
@@ -265,24 +279,23 @@ function auto_crop()
             -- Prevent apply same crop as previous.
             -- Prevent crop bigger than 22/9 aspect ratio.
             -- Prevent asymmetric crop with slight tolerance.
-            -- Prevent small width change.
-            -- Prevent small heigh change.
+            -- Prevent small width/height change.
             if options.fixed_width then
-                meta.w = meta.max_w
-                meta.x = 0
+                meta.detect_current.w = meta.size_origin.w
+                meta.detect_current.x = meta.size_origin.x
             end
 
             local crop_filter =
-                (meta.h ~= meta_last.h or meta.w ~= meta_last.w or meta.x ~= meta_last.x or meta.y ~= meta_last.y) and
-                meta.h >= meta.max_w / options.max_aspect_ratio and
-                meta.w >= meta.max_w_pixel and
-                (meta.x >= (meta.max_w_pixel - meta.w) / 2 and meta.x <= (meta.max_w - meta.w) / 2 or
+                (meta.detect_current.h ~= meta.apply_current.h or meta.detect_current.w ~= meta.apply_current.w or meta.detect_current.x ~= meta.apply_current.x or meta.detect_current.y ~= meta.apply_current.y) and
+                meta.detect_current.h >= meta.size_origin.w / options.max_aspect_ratio and
+                meta.detect_current.w >= meta.size_crop.w and
+                (meta.detect_current.x >= (meta.size_crop.w - meta.detect_current.w) / 2 and meta.detect_current.x <= (meta.size_origin.w - meta.detect_current.w) / 2 or
                     options.fixed_width) and
-                (meta.y >= (meta.max_h_pixel - meta.h) / 2 and meta.y <= (meta.max_h - meta.h) / 2) and
-                (not options.ignore_small_heigth or
-                    options.ignore_small_heigth and
-                        (meta.h > meta_last.h + options.height_pixel_tolerance or
-                            meta.h < meta_last.h - options.height_pixel_tolerance))
+                (meta.detect_current.y >= (meta.size_crop.h - meta.detect_current.h) / 2 and meta.detect_current.y <= (meta.size_origin.h - meta.detect_current.h) / 2) and
+                (not options.ignore_small_height or
+                    options.ignore_small_height and
+                        (meta.detect_current.h > meta.apply_current.h + options.height_pixel_tolerance or
+                            meta.detect_current.h < meta.apply_current.h - options.height_pixel_tolerance))
 
             if crop_filter then
                 -- Remove existing crop.
@@ -292,22 +305,22 @@ function auto_crop()
                     string.format(
                         "no-osd vf pre @%s:lavfi-crop=w=%s:h=%s:x=%s:y=%s",
                         labels.crop,
-                        meta.w,
-                        meta.h,
-                        meta.x,
-                        meta.y
+                        meta.detect_current.w,
+                        meta.detect_current.h,
+                        meta.detect_current.x,
+                        meta.detect_current.y
                     )
                 )
 
                 --Debug apply crop
-                mp.msg.info(string.format("apply-crop=w=%s:h=%s:x=%s:y=%s", meta.w, meta.h, meta.x, meta.y))
+                mp.msg.info(string.format("apply-crop=w=%s:h=%s:x=%s:y=%s", meta.detect_current.w, meta.detect_current.h, meta.detect_current.x, meta.detect_current.y))
 
                 -- Save values to compare later.
-                meta_last = {
-                    w = meta.w,
-                    h = meta.h,
-                    x = meta.x,
-                    y = meta.y
+                meta.apply_current = {
+                    w = meta.detect_current.w,
+                    h = meta.detect_current.h,
+                    x = meta.detect_current.x,
+                    y = meta.detect_current.y
                 }
             else
                 return
