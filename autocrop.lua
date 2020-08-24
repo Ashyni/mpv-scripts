@@ -340,8 +340,6 @@ function auto_crop()
 
                 -- Save values to compare later.
                 meta.apply_current = meta.detect_current
-            else
-                return
             end
         end
     )
