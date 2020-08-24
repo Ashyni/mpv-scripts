@@ -339,12 +339,7 @@ function auto_crop()
                 )
 
                 -- Save values to compare later.
-                meta.apply_current = {
-                    w = meta.detect_current.w,
-                    h = meta.detect_current.h,
-                    x = meta.detect_current.x,
-                    y = meta.detect_current.y
-                }
+                meta.apply_current = meta.detect_current
             else
                 return
             end
