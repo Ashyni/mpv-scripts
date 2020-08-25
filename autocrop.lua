@@ -274,7 +274,6 @@ function auto_crop()
             end
 
             -- Debug crop detect raw value
-
             mp.msg.debug(
                 string.format(
                     "detect_last=w=%s:h=%s:x=%s:y=%s",
