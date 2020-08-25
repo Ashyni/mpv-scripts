@@ -67,7 +67,7 @@ local options = {
     height_pixel_tolerance = 8,
     fixed_width = true,
     -- cropdetect
-    detect_limit_min = 16,
+    detect_limit_min = 0,
     detect_limit = 24,
     detect_round = 2,
     detect_seconds = 0.4,
@@ -274,9 +274,20 @@ function auto_crop()
             end
 
             -- Debug crop detect raw value
+
             mp.msg.debug(
                 string.format(
-                    "raw-crop=w=%s:h=%s:x=%s:y=%s",
+                    "detect_last=w=%s:h=%s:x=%s:y=%s",
+                    meta.detect_last.w,
+                    meta.detect_last.h,
+                    meta.detect_last.x,
+                    meta.detect_last.y
+                )
+            )
+
+            mp.msg.debug(
+                string.format(
+                    "detect_curr=w=%s:h=%s:x=%s:y=%s",
                     meta.detect_current.w,
                     meta.detect_current.h,
                     meta.detect_current.x,
@@ -285,7 +296,7 @@ function auto_crop()
             )
             mp.msg.debug(
                 string.format(
-                    "last-crop=w=%s:h=%s:x=%s:y=%s",
+                    "apply_curr=w=%s:h=%s:x=%s:y=%s",
                     meta.apply_current.w,
                     meta.apply_current.h,
                     meta.apply_current.x,
@@ -296,8 +307,8 @@ function auto_crop()
             -- Detect dark scene, adjust cropdetect limit
             -- between detect_limit_min and detect_limit
             local dark_scene =
-                meta.detect_current.y ~= (meta.size_precrop.h - meta.detect_current.h) / 2 or
-                meta.detect_current.x ~= (meta.size_precrop.w - meta.detect_current.w) / 2
+                meta.detect_current.y == (meta.size_precrop.h - meta.detect_current.h) / 2 or
+                meta.detect_current.x == (meta.size_precrop.w - meta.detect_current.w) / 2
 
             -- Scale adjustement on detect_limit, min 1
             local limit_adjust_by = (limit_adjust - limit_adjust % 10) / 10
@@ -307,7 +318,7 @@ function auto_crop()
             end
 
             local limit = options.detect_limit
-            if dark_scene then
+            if not dark_scene then
                 if limit_adjust > options.detect_limit_min then
                     if limit_adjust - limit_adjust_by >= options.detect_limit_min then
                         limit_adjust = limit_adjust - limit_adjust_by
@@ -316,7 +327,6 @@ function auto_crop()
                     end
                     -- Debug limit_adjust change
                     mp.msg.debug(string.format("limit_adjust=%s", limit_adjust))
-                    return
                 end
             else
                 if limit_adjust < limit then
@@ -344,7 +354,8 @@ function auto_crop()
                 (meta.detect_current.h ~= meta.apply_current.h or meta.detect_current.w ~= meta.apply_current.w) and
                 meta.detect_current.x == (meta.size_precrop.w - meta.detect_current.w) / 2 and
                 meta.detect_current.y == (meta.size_precrop.h - meta.detect_current.h) / 2 and
-                meta.detect_current.h >= meta.size_precrop.w / options.max_aspect_ratio
+                meta.detect_current.h >= meta.size_precrop.w / options.max_aspect_ratio and
+                meta.detect_current.h == meta.detect_last.h
 
             if crop_filter then
                 -- Remove existing crop.
@@ -362,19 +373,46 @@ function auto_crop()
                 )
 
                 --Debug apply crop
-                mp.msg.info(
+                mp.msg.debug(
                     string.format(
-                        "apply-crop=w=%s:h=%s:x=%s:y=%s",
-                        meta.detect_current.w,
-                        meta.detect_current.h,
-                        meta.detect_current.x,
-                        meta.detect_current.y
+                        "apply-last=w=%s:h=%s:x=%s:y=%s",
+                        meta.apply_last.w,
+                        meta.apply_last.h,
+                        meta.apply_last.x,
+                        meta.apply_last.y
+                    )
+                )
+                mp.msg.debug(
+                    string.format(
+                        "apply-curr=w=%s:h=%s:x=%s:y=%s",
+                        meta.apply_current.w,
+                        meta.apply_current.h,
+                        meta.apply_current.x,
+                        meta.apply_current.y
                     )
                 )
 
                 -- Save values to compare later.
-                meta.apply_current = meta.detect_current
+
+                meta.apply_last = {
+                    w = meta.apply_current.w,
+                    h = meta.apply_current.h,
+                    x = meta.apply_current.x,
+                    y = meta.apply_current.y
+                }
+                meta.apply_current = {
+                    w = meta.detect_current.w,
+                    h = meta.detect_current.h,
+                    x = meta.detect_current.x,
+                    y = meta.detect_current.y
+                }
             end
+            meta.detect_last = {
+                w = meta.detect_current.w,
+                h = meta.detect_current.h,
+                x = meta.detect_current.x,
+                y = meta.detect_current.y
+            }
         end
     )
 end
