@@ -66,7 +66,6 @@ local options = {
     width_pixel_tolerance = 8,
     height_pixel_tolerance = 8,
     fixed_width = true,
-    ignore_small_height = true,
     -- cropdetect
     detect_limit_min = 16,
     detect_limit = 24,
@@ -86,10 +85,16 @@ local timers = {}
 
 -- Multi-Dimensional Array metadata
 meta = {}
-key1 = {"size_origin", "size_crop", "apply_current", "apply_last", "detect_current", "detect_last"}
+key1 = {"size_origin", "size_precrop", "apply_current", "apply_last", "detect_current", "detect_last"}
 key2 = {"w", "h", "x", "y"}
 for k, v in pairs(key1) do
     meta[v] = {key2}
+end
+
+function native_width_height()
+    local width = mp.get_property_native("width")
+    local height = mp.get_property_native("height")
+    return width, height
 end
 
 function init_size()
@@ -101,16 +106,6 @@ function init_size()
         y = 0
     }
     meta.apply_current = meta.size_origin
-    meta.size_crop = {
-        w = width - options.width_pixel_tolerance,
-        h = height - options.height_pixel_tolerance
-    }
-end
-
-function native_width_height()
-    local width = mp.get_property_native("width")
-    local height = mp.get_property_native("height")
-    return width, height
 end
 
 function is_filter_present(label)
@@ -140,6 +135,50 @@ function is_cropable()
     return vid and not is_album
 end
 
+function insert_crop_filter()
+    -- Insert the cropdetect filter.
+    local limit = options.detect_limit
+    local round = options.detect_round
+    local reset = options.reset
+
+    mp.command(
+        string.format(
+            "no-osd vf pre @%s:cropdetect=limit=%d/255:round=%d:reset=%d",
+            labels.cropdetect,
+            limit_adjust,
+            round,
+            reset
+        )
+    )
+end
+
+function collect_metadata()
+    -- Get the metadata and remove the cropdetect filter.
+    local cropdetect_metadata = mp.get_property_native(string.format("vf-metadata/%s", labels.cropdetect))
+    remove_filter(labels.cropdetect)
+
+    -- Remove the timer of detect crop.
+    if timers.crop_detect:is_enabled() then
+        timers.crop_detect:kill()
+    end
+
+    -- Verify the existence of metadata and make them usable.
+    if cropdetect_metadata then
+        meta.detect_current = {
+            w = tonumber(cropdetect_metadata["lavfi.cropdetect.w"]),
+            h = tonumber(cropdetect_metadata["lavfi.cropdetect.h"]),
+            x = tonumber(cropdetect_metadata["lavfi.cropdetect.x"]),
+            y = tonumber(cropdetect_metadata["lavfi.cropdetect.y"])
+        }
+        return true
+    else
+        mp.msg.error("No crop data.")
+        mp.msg.info("Was the cropdetect filter successfully inserted?")
+        mp.msg.info("Does your version of ffmpeg/libav support AVFrame metadata?")
+        return false
+    end
+end
+
 function remove_filter(label)
     if is_filter_present(label) then
         mp.command(string.format("no-osd vf remove @%s", label))
@@ -159,72 +198,78 @@ function cleanup()
             timer = nil
         end
     end
+
+    -- Reset meta.size
+    meta.size_origin = {}
+    meta.size_precrop = {}
 end
 
-function auto_crop()
-    -- Verify if there is enough time to detect crop.
+function pre_crop()
     local time_needed = options.detect_seconds
-
     if is_enough_time(time_needed) then
         return
     end
 
-    -- Insert the cropdetect filter.
-    local limit = options.detect_limit
-    local round = options.detect_round
-    local reset = options.reset
+    insert_crop_filter()
 
-    mp.command(
-        string.format(
-            "no-osd vf pre @%s:cropdetect=limit=%d/255:round=%d:reset=%d",
-            labels.cropdetect,
-            limit_adjust,
-            round,
-            reset
-        )
+    timers.crop_detect =
+        mp.add_timeout(
+        time_needed,
+        function()
+            if not collect_metadata() then
+                return
+            end
+
+            local precrop =
+                meta.detect_current.w >= meta.size_origin.w - options.width_pixel_tolerance and
+                meta.detect_current.h >= meta.size_origin.h - options.height_pixel_tolerance and
+                (meta.detect_current.x >=
+                    (meta.size_origin.w - options.width_pixel_tolerance - meta.detect_current.w) / 2 and
+                    meta.detect_current.x <= (meta.size_origin.w - meta.detect_current.w) / 2) and
+                (meta.detect_current.y >=
+                    (meta.size_origin.h - options.width_pixel_tolerance - meta.detect_current.h) / 2 and
+                    meta.detect_current.y <= (meta.size_origin.h - meta.detect_current.h) / 2)
+
+            if precrop then
+                meta.size_precrop = meta.detect_current
+            else
+                meta.size_precrop = meta.size_origin
+            end
+            mp.msg.info(
+                string.format(
+                    "pre-crop=w=%s:h=%s:x=%s:y=%s",
+                    meta.size_precrop.w,
+                    meta.size_precrop.h,
+                    meta.size_precrop.x,
+                    meta.size_precrop.y
+                )
+            )
+            timers.periodic_timer:resume()
+        end
     )
+end
+
+function auto_crop()
+    -- Check if pre_crop() is already done.
+    if not meta.size_precrop.w then
+        timers.periodic_timer:kill()
+        pre_crop()
+    end
+
+    -- Verify if there is enough time to detect crop.
+    local time_needed = options.detect_seconds
+    if is_enough_time(time_needed) then
+        return
+    end
+
+    insert_crop_filter()
 
     -- Wait to gather data.
     timers.crop_detect =
         mp.add_timeout(
         time_needed,
         function()
-            -- Get the metadata and remove the cropdetect filter.
-            local cropdetect_metadata = mp.get_property_native(string.format("vf-metadata/%s", labels.cropdetect))
-            remove_filter(labels.cropdetect)
-
-            -- Remove the timer of detect crop.
-            if timers.crop_detect:is_enabled() then
-                timers.crop_detect:kill()
-            end
-
-            -- Verify the existence of metadata.
-            if cropdetect_metadata then
-                meta.detect_current = {
-                    w = cropdetect_metadata["lavfi.cropdetect.w"],
-                    h = cropdetect_metadata["lavfi.cropdetect.h"],
-                    x = cropdetect_metadata["lavfi.cropdetect.x"],
-                    y = cropdetect_metadata["lavfi.cropdetect.y"]
-                }
-            else
-                mp.msg.error("No crop data.")
-                mp.msg.info("Was the cropdetect filter successfully inserted?")
-                mp.msg.info("Does your version of ffmpeg/libav support AVFrame metadata?")
-                return
-            end
-
-            -- Verify that the metadata meets the requirements and convert it.
-            if meta.detect_current.w and meta.detect_current.h and meta.detect_current.x and meta.detect_current.y then
-                local width, height = native_width_height()
-                meta.detect_current = {
-                    w = tonumber(meta.detect_current.w),
-                    h = tonumber(meta.detect_current.h),
-                    x = tonumber(meta.detect_current.x),
-                    y = tonumber(meta.detect_current.y)
-                }
-            else
-                mp.msg.error("Got empty crop data.")
-                mp.msg.info("You might need to increase detect_seconds.")
+            if not collect_metadata() then
                 return
             end
 
@@ -251,10 +296,8 @@ function auto_crop()
             -- Detect dark scene, adjust cropdetect limit
             -- between detect_limit_min and detect_limit
             local dark_scene =
-                (meta.detect_current.y >= (meta.size_crop.h - meta.detect_current.h) / 2 and
-                meta.detect_current.y <= (meta.size_origin.h - meta.detect_current.h) / 2) or
-                (meta.detect_current.x >= (meta.size_crop.w - meta.detect_current.w) / 2 and
-                    meta.detect_current.x <= (meta.size_origin.w - meta.detect_current.w) / 2)
+                meta.detect_current.y ~= (meta.size_precrop.h - meta.detect_current.h) / 2 or
+                meta.detect_current.x ~= (meta.size_precrop.w - meta.detect_current.w) / 2
 
             -- Scale adjustement on detect_limit, min 1
             local limit_adjust_by = (limit_adjust - limit_adjust % 10) / 10
@@ -263,7 +306,8 @@ function auto_crop()
                 limit_adjust_by = 1
             end
 
-            if not dark_scene then
+            local limit = options.detect_limit
+            if dark_scene then
                 if limit_adjust > options.detect_limit_min then
                     if limit_adjust - limit_adjust_by >= options.detect_limit_min then
                         limit_adjust = limit_adjust - limit_adjust_by
@@ -292,25 +336,15 @@ function auto_crop()
             -- Prevent asymmetric crop with slight tolerance.
             -- Prevent small width/height change.
             if options.fixed_width then
-                meta.detect_current.w = meta.size_origin.w
-                meta.detect_current.x = meta.size_origin.x
+                meta.detect_current.w = meta.size_precrop.w
+                meta.detect_current.x = meta.size_precrop.x
             end
 
             local crop_filter =
-                (meta.detect_current.h ~= meta.apply_current.h or meta.detect_current.w ~= meta.apply_current.w or
-                meta.detect_current.x ~= meta.apply_current.x or
-                meta.detect_current.y ~= meta.apply_current.y) and
-                meta.detect_current.h >= meta.size_origin.w / options.max_aspect_ratio and
-                meta.detect_current.w >= meta.size_crop.w and
-                (meta.detect_current.x >= (meta.size_crop.w - meta.detect_current.w) / 2 and
-                    meta.detect_current.x <= (meta.size_origin.w - meta.detect_current.w) / 2 or
-                    options.fixed_width) and
-                (meta.detect_current.y >= (meta.size_crop.h - meta.detect_current.h) / 2 and
-                    meta.detect_current.y <= (meta.size_origin.h - meta.detect_current.h) / 2) and
-                (not options.ignore_small_height or
-                    options.ignore_small_height and
-                        (meta.detect_current.h > meta.apply_current.h + options.height_pixel_tolerance or
-                            meta.detect_current.h < meta.apply_current.h - options.height_pixel_tolerance))
+                (meta.detect_current.h ~= meta.apply_current.h or meta.detect_current.w ~= meta.apply_current.w) and
+                meta.detect_current.x == (meta.size_precrop.w - meta.detect_current.w) / 2 and
+                meta.detect_current.y == (meta.size_precrop.h - meta.detect_current.h) / 2 and
+                meta.detect_current.h >= meta.size_precrop.w / options.max_aspect_ratio
 
             if crop_filter then
                 -- Remove existing crop.
@@ -375,6 +409,7 @@ function on_start()
                 if is_enough_time(time_needed) then
                     return
                 end
+
                 timers.periodic_timer = mp.add_periodic_timer(time_needed, auto_crop)
             else
                 auto_crop()
