@@ -343,8 +343,8 @@ function auto_crop()
             -- Crop Filter:
             -- Prevent apply same crop as previous.
             -- Prevent crop bigger than max_aspect_ratio.
-            -- Prevent asymmetric crop with slight tolerance.
-            -- Prevent small width/height change.
+            -- Prevent asymmetric crop.
+            -- Confirm with last detect to avoid false positive.
             if options.fixed_width then
                 meta.detect_current.w = meta.size_precrop.w
                 meta.detect_current.x = meta.size_precrop.x
@@ -393,7 +393,6 @@ function auto_crop()
                 )
 
                 -- Save values to compare later.
-
                 meta.apply_last = {
                     w = meta.apply_current.w,
                     h = meta.apply_current.h,
