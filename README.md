@@ -9,7 +9,7 @@ Script to automatically crop top/bottom black bar on Ultra Wide Screen (21:9).
 ### Features
 
 - Periodic or Single scan/crop.
-- Option to prevent small width and/or height change.
+- Pre-crop for video with less than 8px black bar.
 - Prevent crop bigger than option max_aspect_ratio.
 - Prevent asymmetric crop.
 - Detect dark scene and auto adjust detect_limit.
