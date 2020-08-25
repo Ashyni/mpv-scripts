@@ -105,7 +105,6 @@ function init_size()
         x = 0,
         y = 0
     }
-    meta.apply_current = meta.size_origin
 end
 
 function is_filter_present(label)
@@ -235,6 +234,7 @@ function pre_crop()
             else
                 meta.size_precrop = meta.size_origin
             end
+            meta.apply_current = meta.size_precrop
             mp.msg.info(
                 string.format(
                     "pre-crop=w=%s:h=%s:x=%s:y=%s",
