@@ -340,16 +340,16 @@ function auto_crop()
                 end
             end
 
-            -- Crop Filter:
-            -- Prevent apply same crop as previous.
-            -- Prevent crop bigger than max_aspect_ratio.
-            -- Prevent asymmetric crop.
-            -- Confirm with last detect to avoid false positive.
             if options.fixed_width then
                 meta.detect_current.w = meta.size_precrop.w
                 meta.detect_current.x = meta.size_precrop.x
             end
 
+            -- Crop Filter:
+            -- Prevent apply same crop as previous.
+            -- Prevent crop bigger than max_aspect_ratio.
+            -- Prevent asymmetric crop.
+            -- Confirm with last detect to avoid false positive.
             local crop_filter =
                 (meta.detect_current.h ~= meta.apply_current.h or meta.detect_current.w ~= meta.apply_current.w) and
                 meta.detect_current.x == (meta.size_precrop.w - meta.detect_current.w) / 2 and
