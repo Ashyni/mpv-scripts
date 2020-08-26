@@ -50,7 +50,9 @@ detect_seconds: seconds - How long to gather cropdetect data.
     Increasing this may be desirable to allow cropdetect more
     time to collect data.
 
-xxx_aspect_ratio: [21.6/9] or [2.4]
+xxx_aspect_ratio: [21.6/9] or [2.4] - min_aspect_ratio is used to
+disable the script if the video is over that ratio (already crop).
+max_aspect_ratio is used to prevent cropping over that ratio.
 --]]
 require "mp.msg"
 require "mp.options"
@@ -177,17 +179,19 @@ function remove_filter(label)
 end
 
 function cleanup()
+    mp.msg.info("Cleanup.")
+    -- Kill all timers.
+    for index, value in pairs(timers) do
+        if timers[index]:is_enabled() then
+            timers[index]:kill()
+        end
+    end
+    -- Remove all timers for a proper init seek/resume, need to work on that.
+    timers = {}
+
     -- Remove all existing filters.
     for key, value in pairs(labels) do
         remove_filter(value)
-    end
-
-    -- Kill all timers.
-    for index, timer in pairs(timers) do
-        if timer then
-            timer:kill()
-            timer = nil
-        end
     end
 
     -- Reset meta.size
@@ -400,9 +404,9 @@ function on_toggle()
     else
         if timers.periodic_timer:is_enabled() then
             seek()
-            init_size()
             remove_filter(labels.crop)
             remove_filter(labels.cropdetect)
+            meta.apply_current = meta.size_precrop
             mp.osd_message("Autocrop paused.", 3)
         else
             resume()
@@ -412,10 +416,10 @@ function on_toggle()
 end
 
 function seek(log)
+    if log ~= false then
+        mp.msg.warn("Seek.")
+    end
     if timers.periodic_timer and timers.periodic_timer:is_enabled() then
-        if log ~= false then
-            mp.msg.warn("Seek.")
-        end
         timers.periodic_timer:kill()
         if timers.crop_detect and timers.crop_detect:is_enabled() then
             timers.crop_detect:kill()
@@ -424,11 +428,19 @@ function seek(log)
 end
 
 function resume(log)
+    if log ~= false then
+        mp.msg.warn("Resume.")
+    end
+
     if timers.periodic_timer and not timers.periodic_timer:is_enabled() then
-        if log ~= false then
-            mp.msg.warn("Resume.")
-        end
         timers.periodic_timer:resume()
+    end
+
+    local playback_time = mp.get_property_native("playback-time")
+    if timers.start_delay and timers.start_delay:is_enabled() and playback_time >= options.start_delay then
+        timers.start_delay.timeout = 0
+        timers.start_delay:kill()
+        timers.start_delay:resume()
     end
 end
 
