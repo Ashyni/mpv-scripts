@@ -416,10 +416,10 @@ function on_toggle()
 end
 
 function seek(log)
-    if log ~= false then
-        mp.msg.warn("Seek.")
-    end
     if timers.periodic_timer and timers.periodic_timer:is_enabled() then
+        if log ~= false then
+            mp.msg.warn("Seek.")
+        end
         timers.periodic_timer:kill()
         if timers.crop_detect and timers.crop_detect:is_enabled() then
             timers.crop_detect:kill()
@@ -428,11 +428,10 @@ function seek(log)
 end
 
 function resume(log)
-    if log ~= false then
-        mp.msg.warn("Resume.")
-    end
-
     if timers.periodic_timer and not timers.periodic_timer:is_enabled() then
+        if log ~= false then
+            mp.msg.warn("Resume.")
+        end
         timers.periodic_timer:resume()
     end
 
