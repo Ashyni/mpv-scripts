@@ -84,6 +84,7 @@ local labels = {
 }
 local limit_adjust = options.detect_limit
 local timers = {}
+local pause = nil
 
 -- Multi-Dimensional Array metadata
 meta = {}
@@ -152,9 +153,9 @@ function collect_metadata()
     remove_filter(labels.cropdetect)
 
     -- Remove the timer of detect crop.
-    if timers.crop_detect:is_enabled() then
-        timers.crop_detect:kill()
-    end
+    -- if timers.crop_detect:is_enabled() then
+    --     timers.crop_detect:kill()
+    -- end
 
     -- Verify the existence of metadata and make them usable.
     if cropdetect_metadata then
@@ -165,7 +166,7 @@ function collect_metadata()
             y = tonumber(cropdetect_metadata["lavfi.cropdetect.y"])
         }
     elseif not (meta.detect_current.w and meta.detect_current.h and meta.detect_current.x and meta.detect_current.y) then
-        mp.msg.error("Empty crop data. If repeated, increase detect_seconds")
+        mp.msg.warn("Empty crop data. If repeated, increase detect_seconds")
         return false
     else
         mp.msg.error("No crop data.")
@@ -190,7 +191,7 @@ function cleanup()
             timers[index]:kill()
         end
     end
-    -- Remove all timers for a proper init seek/resume, need to work on that.
+    -- Remove all timers.
     timers = {}
 
     -- Remove all existing filters.
@@ -366,15 +367,21 @@ function on_toggle()
         auto_crop()
         mp.osd_message("Autocrop once.", 3)
     else
-        if timers.periodic_timer:is_enabled() then
-            seek()
+        if is_filter_present(labels.crop) then
             remove_filter(labels.crop)
             remove_filter(labels.cropdetect)
             meta.apply_current = meta.size_origin
-            mp.osd_message("Autocrop paused.", 3)
+        end
+        if timers.periodic_timer:is_enabled() then
+            if not pause then
+                seek()
+                mp.osd_message("Autocrop paused.", 3)
+            end
         else
-            resume()
-            mp.osd_message("Autocrop resumed.", 3)
+            if not pause then
+                resume()
+                mp.osd_message("Autocrop resumed.", 3)
+            end
         end
     end
 end
@@ -410,12 +417,14 @@ end
 function pause(_, bool)
     if options.auto then
         if bool then
-            mp.msg.warn("Paused.")
+            pause = true
+            mp.msg.info("Paused.")
             seek(false)
-            mp.unregister_event("seek")
-            mp.unregister_event("playback-restart")
+            mp.unregister_event(seek)
+            mp.unregister_event(resume)
         else
-            mp.msg.warn("Unpaused.")
+            pause = false
+            mp.msg.info("Unpaused.")
             resume(false)
             mp.register_event("seek", seek)
             mp.register_event("playback-restart", resume)
