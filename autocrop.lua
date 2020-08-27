@@ -63,7 +63,7 @@ local options = {
     periodic_timer = 0.1,
     start_delay = 0,
     -- crop behavior
-    min_aspect_ratio = 16 / 9,
+    min_aspect_ratio = 21.6 / 9,
     max_aspect_ratio = 21.6 / 9,
     width_pixel_tolerance = 8,
     height_pixel_tolerance = 8,
@@ -107,6 +107,7 @@ function init_size()
         x = 0,
         y = 0
     }
+    meta.apply_current = meta.size_origin
 end
 
 function is_filter_present(label)
@@ -151,9 +152,9 @@ function collect_metadata()
     remove_filter(labels.cropdetect)
 
     -- Remove the timer of detect crop.
-    if timers.crop_detect:is_enabled() then
-        timers.crop_detect:kill()
-    end
+    -- if timers.crop_detect:is_enabled() then
+    --     timers.crop_detect:kill()
+    -- end
 
     -- Verify the existence of metadata and make them usable.
     if cropdetect_metadata then
@@ -163,13 +164,15 @@ function collect_metadata()
             x = tonumber(cropdetect_metadata["lavfi.cropdetect.x"]),
             y = tonumber(cropdetect_metadata["lavfi.cropdetect.y"])
         }
-        return true
-    else
-        mp.msg.error("No crop data.")
-        mp.msg.info("Was the cropdetect filter successfully inserted?")
-        mp.msg.info("Does your version of ffmpeg/libav support AVFrame metadata?")
-        return false
+
+        if not (meta.detect_current.w and meta.detect_current.h and meta.detect_current.x and meta.detect_current.y) then
+            mp.msg.error("No crop data.")
+            mp.msg.info("Was the cropdetect filter successfully inserted?")
+            mp.msg.info("Does your version of ffmpeg/libav support AVFrame metadata?")
+            return false
+        end
     end
+    return true
 end
 
 function remove_filter(label)
@@ -196,51 +199,11 @@ function cleanup()
 
     -- Reset meta.size
     meta.size_origin = {}
-    meta.size_precrop = {}
-end
-
-function pre_crop()
-    local time_needed = options.detect_seconds
-    if is_enough_time(time_needed) then
-        return
-    end
-
-    insert_crop_filter()
-
-    timers.crop_detect =
-        mp.add_timeout(
-        time_needed,
-        function()
-            if not collect_metadata() then
-                return
-            end
-
-            local precrop =
-                meta.detect_current.w >= meta.size_origin.w - options.width_pixel_tolerance and meta.detect_current.h >= meta.size_origin.h - options.height_pixel_tolerance and
-                (meta.detect_current.x >= (meta.size_origin.w - options.width_pixel_tolerance - meta.detect_current.w) / 2 and
-                    meta.detect_current.x <= (meta.size_origin.w - meta.detect_current.w) / 2) and
-                (meta.detect_current.y >= (meta.size_origin.h - options.width_pixel_tolerance - meta.detect_current.h) / 2 and
-                    meta.detect_current.y <= (meta.size_origin.h - meta.detect_current.h) / 2)
-
-            if precrop then
-                meta.size_precrop = meta.detect_current
-            else
-                meta.size_precrop = meta.size_origin
-            end
-            meta.apply_current = meta.size_precrop
-            mp.msg.info(string.format("pre-crop=w=%s:h=%s:x=%s:y=%s", meta.size_precrop.w, meta.size_precrop.h, meta.size_precrop.x, meta.size_precrop.y))
-            timers.periodic_timer:resume()
-        end
-    )
+    -- meta.size_precrop = {}
+    limit_adjust = options.detect_limit
 end
 
 function auto_crop()
-    -- Check if pre_crop() is already done.
-    if not meta.size_precrop.w then
-        timers.periodic_timer:kill()
-        pre_crop()
-    end
-
     -- Verify if there is enough time to detect crop.
     local time_needed = options.detect_seconds
     if is_enough_time(time_needed) then
@@ -266,7 +229,7 @@ function auto_crop()
             -- Detect dark scene, adjust cropdetect limit
             -- between detect_limit_min and detect_limit
             local dark_scene =
-                meta.detect_current.y == (meta.size_precrop.h - meta.detect_current.h) / 2 or meta.detect_current.x == (meta.size_precrop.w - meta.detect_current.w) / 2
+                meta.detect_current.y == (meta.size_origin.h - meta.detect_current.h) / 2 or meta.detect_current.x == (meta.size_origin.w - meta.detect_current.w) / 2
 
             -- Scale adjustement on detect_limit, min 1
             local limit_adjust_by = (limit_adjust - limit_adjust % 10) / 10
@@ -299,8 +262,8 @@ function auto_crop()
             end
 
             if options.fixed_width then
-                meta.detect_current.w = meta.size_precrop.w
-                meta.detect_current.x = meta.size_precrop.x
+                meta.detect_current.w = meta.size_origin.w
+                meta.detect_current.x = meta.size_origin.x
             end
 
             -- Crop Filter:
@@ -310,9 +273,9 @@ function auto_crop()
             -- Confirm with last detect to avoid false positive.
             local crop_filter =
                 (meta.detect_current.h ~= meta.apply_current.h or meta.detect_current.w ~= meta.apply_current.w) and
-                meta.detect_current.x == (meta.size_precrop.w - meta.detect_current.w) / 2 and
-                meta.detect_current.y == (meta.size_precrop.h - meta.detect_current.h) / 2 and
-                meta.detect_current.h >= meta.size_precrop.w / options.max_aspect_ratio and
+                meta.detect_current.x == (meta.size_origin.w - meta.detect_current.w) / 2 and
+                meta.detect_current.y == (meta.size_origin.h - meta.detect_current.h) / 2 and
+                meta.detect_current.h >= meta.size_origin.w / options.max_aspect_ratio and
                 meta.detect_current.h == meta.detect_last.h
 
             if crop_filter then
@@ -406,7 +369,7 @@ function on_toggle()
             seek()
             remove_filter(labels.crop)
             remove_filter(labels.cropdetect)
-            meta.apply_current = meta.size_precrop
+            meta.apply_current = meta.size_origin
             mp.osd_message("Autocrop paused.", 3)
         else
             resume()
@@ -436,7 +399,7 @@ function resume(log)
     end
 
     local playback_time = mp.get_property_native("playback-time")
-    if timers.start_delay and timers.start_delay:is_enabled() and playback_time >= options.start_delay then
+    if timers.start_delay and timers.start_delay:is_enabled() and playback_time > options.start_delay then
         timers.start_delay.timeout = 0
         timers.start_delay:kill()
         timers.start_delay:resume()
