@@ -152,9 +152,9 @@ function collect_metadata()
     remove_filter(labels.cropdetect)
 
     -- Remove the timer of detect crop.
-    -- if timers.crop_detect:is_enabled() then
-    --     timers.crop_detect:kill()
-    -- end
+    if timers.crop_detect:is_enabled() then
+        timers.crop_detect:kill()
+    end
 
     -- Verify the existence of metadata and make them usable.
     if cropdetect_metadata then
@@ -164,13 +164,14 @@ function collect_metadata()
             x = tonumber(cropdetect_metadata["lavfi.cropdetect.x"]),
             y = tonumber(cropdetect_metadata["lavfi.cropdetect.y"])
         }
-
-        if not (meta.detect_current.w and meta.detect_current.h and meta.detect_current.x and meta.detect_current.y) then
-            mp.msg.error("No crop data.")
-            mp.msg.info("Was the cropdetect filter successfully inserted?")
-            mp.msg.info("Does your version of ffmpeg/libav support AVFrame metadata?")
-            return false
-        end
+    elseif not (meta.detect_current.w and meta.detect_current.h and meta.detect_current.x and meta.detect_current.y) then
+        mp.msg.error("Empty crop data. If repeated, increase detect_seconds")
+        return false
+    else
+        mp.msg.error("No crop data.")
+        mp.msg.info("Was the cropdetect filter successfully inserted?")
+        mp.msg.info("Does your version of ffmpeg/libav support AVFrame metadata?")
+        return false
     end
     return true
 end
