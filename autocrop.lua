@@ -95,14 +95,14 @@ for k, v in pairs(key1) do
 end
 
 function init_size()
-    local width
-    local height
+    local width = mp.get_property_native("width")
+    local height = mp.get_property_native("height")
 
-    repeat
-        width = mp.get_property_native("width")
-        height = mp.get_property_native("height")
-    until width ~= "0"
-    mp.msg.info(string.format("size_origin width=%s, height=%s", width, height))
+    -- repeat
+    --     width = mp.get_property_native("width")
+    --     height = mp.get_property_native("height")
+    -- until width ~= "0" and height ~= "0" or width ~= "" and height ~= ""
+    -- mp.msg.info(string.format("size_origin width=%s, height=%s", width, height))
 
     meta.size_origin = {
         w = width,
@@ -168,16 +168,18 @@ function collect_metadata()
             x = tonumber(cropdetect_metadata["lavfi.cropdetect.x"]),
             y = tonumber(cropdetect_metadata["lavfi.cropdetect.y"])
         }
-    elseif not (meta.detect_current.w and meta.detect_current.h and meta.detect_current.x and meta.detect_current.y) then
-        mp.msg.warn("Empty crop data. If repeated, increase detect_seconds")
-        return false
+        if not (meta.detect_current.w and meta.detect_current.h and meta.detect_current.x and meta.detect_current.y) then
+            mp.msg.warn("Empty crop data. If repeated, increase detect_seconds")
+            return false
+        else
+            return true
+        end
     else
         mp.msg.error("No crop data.")
         mp.msg.info("Was the cropdetect filter successfully inserted?")
         mp.msg.info("Does your version of ffmpeg/libav support AVFrame metadata?")
         return false
     end
-    return true
 end
 
 function remove_filter(label)
@@ -230,6 +232,7 @@ function auto_crop()
             mp.msg.debug(string.format("detect_last=w=%s:h=%s:x=%s:y=%s", meta.detect_last.w, meta.detect_last.h, meta.detect_last.x, meta.detect_last.y))
             mp.msg.debug(string.format("detect_curr=w=%s:h=%s:x=%s:y=%s", meta.detect_current.w, meta.detect_current.h, meta.detect_current.x, meta.detect_current.y))
             mp.msg.debug(string.format("apply_curr=w=%s:h=%s:x=%s:y=%s", meta.apply_current.w, meta.apply_current.h, meta.apply_current.x, meta.apply_current.y))
+            mp.msg.debug(string.format("size_origin=w=%s:h=%s detect_current:w=%s:h=%s", meta.size_origin.w, meta.size_origin.h, meta.detect_current.w, meta.detect_current.h))
 
             -- Detect dark scene, adjust cropdetect limit
             -- between detect_limit_min and detect_limit
