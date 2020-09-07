@@ -94,14 +94,16 @@ for k, v in pairs(key1) do
     meta[v] = {key2}
 end
 
-function native_width_height()
-    local width = mp.get_property_native("width")
-    local height = mp.get_property_native("height")
-    return width, height
-end
-
 function init_size()
-    local width, height = native_width_height()
+    local width
+    local height
+
+    repeat
+        width = mp.get_property_native("width")
+        height = mp.get_property_native("height")
+    until width ~= "0"
+    mp.msg.info(string.format("size_origin width=%s, height=%s", width, height))
+
     meta.size_origin = {
         w = width,
         h = height,
@@ -127,6 +129,7 @@ function is_enough_time(seconds)
     local playtime_remaining = mp.get_property_native("playtime-remaining")
     if playtime_remaining and time_needed > playtime_remaining then
         mp.msg.warn("Not enough time for autocrop.")
+        seek(false)
         return false
     end
 end
@@ -324,23 +327,22 @@ function auto_crop()
 end
 
 function on_start()
-    -- Clean up at the beginning.
-    cleanup()
-
-    local width, height = native_width_height()
-
     if not options.enable then
         mp.msg.info("Disable script.")
         return
     elseif not is_cropable() then
         mp.msg.warn("Only works for videos.")
         return
-    elseif options.min_aspect_ratio < width / height then
+    end
+
+    cleanup()
+
+    init_size()
+
+    if options.min_aspect_ratio < meta.size_origin.w / meta.size_origin.h then
         mp.msg.info("Disable script, AR > min_aspect_ratio.")
         return
     end
-
-    init_size()
 
     timers.start_delay =
         mp.add_timeout(
