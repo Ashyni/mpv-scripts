@@ -60,7 +60,7 @@ require "mp.options"
 local options = {
     enable = true,
     auto = true,
-    periodic_timer = 0.1,
+    periodic_timer = 0,
     start_delay = 0,
     -- crop behavior
     min_aspect_ratio = 21.6 / 9,
@@ -84,7 +84,11 @@ local labels = {
 }
 local limit_adjust = options.detect_limit
 local timers = {}
-local pause = nil
+-- States
+local in_progress = nil
+local paused = nil
+local toggled = nil
+local seeking = nil
 
 -- Multi-Dimensional Array metadata
 meta = {}
@@ -150,15 +154,16 @@ function insert_crop_filter()
     mp.command(string.format("no-osd vf pre @%s:cropdetect=limit=%d/255:round=%d:reset=%d", labels.cropdetect, limit_adjust, round, reset))
 end
 
+function remove_filter(label)
+    if is_filter_present(label) then
+        mp.command(string.format("no-osd vf remove @%s", label))
+    end
+end
+
 function collect_metadata()
     -- Get the metadata and remove the cropdetect filter.
     local cropdetect_metadata = mp.get_property_native(string.format("vf-metadata/%s", labels.cropdetect))
     remove_filter(labels.cropdetect)
-
-    -- Remove the timer of detect crop.
-    -- if timers.crop_detect:is_enabled() then
-    --     timers.crop_detect:kill()
-    -- end
 
     -- Verify the existence of metadata and make them usable.
     if cropdetect_metadata then
@@ -169,23 +174,147 @@ function collect_metadata()
             y = tonumber(cropdetect_metadata["lavfi.cropdetect.y"])
         }
         if not (meta.detect_current.w and meta.detect_current.h and meta.detect_current.x and meta.detect_current.y) then
-            mp.msg.warn("Empty crop data. If repeated, increase detect_seconds")
+            if not seeking and not paused and not toggled then
+                mp.msg.warn("Empty crop data. If repeated, increase detect_seconds")
+            end
             return false
         else
             return true
         end
     else
-        mp.msg.error("No crop data.")
-        mp.msg.info("Was the cropdetect filter successfully inserted?")
-        mp.msg.info("Does your version of ffmpeg/libav support AVFrame metadata?")
+        if not seeking and not paused and not toggled then
+            mp.msg.error("No crop data.")
+            mp.msg.info("Was the cropdetect filter successfully inserted?")
+            mp.msg.info("Does your version of ffmpeg/libav support AVFrame metadata?")
+        end
         return false
     end
 end
 
-function remove_filter(label)
-    if is_filter_present(label) then
-        mp.command(string.format("no-osd vf remove @%s", label))
+function auto_crop()
+    -- Pause auto_crop
+    in_progress = true
+    timers.periodic_timer:stop()
+
+    -- Verify if there is enough time to detect crop.
+    local time_needed = options.detect_seconds
+    if is_enough_time(time_needed) then
+        return
     end
+
+    insert_crop_filter()
+
+    -- Wait to gather data.
+    timers.crop_detect =
+        mp.add_timeout(
+        time_needed,
+        function()
+            if collect_metadata() then
+                -- Debug crop detect raw value
+                mp.msg.debug(string.format("detect_last=w=%s:h=%s:x=%s:y=%s", meta.detect_last.w, meta.detect_last.h, meta.detect_last.x, meta.detect_last.y))
+                mp.msg.debug(string.format("detect_curr=w=%s:h=%s:x=%s:y=%s", meta.detect_current.w, meta.detect_current.h, meta.detect_current.x, meta.detect_current.y))
+                mp.msg.debug(string.format("apply_curr=w=%s:h=%s:x=%s:y=%s", meta.apply_current.w, meta.apply_current.h, meta.apply_current.x, meta.apply_current.y))
+                mp.msg.debug(string.format("size_origin=w=%s:h=%s detect_current:w=%s:h=%s", meta.size_origin.w, meta.size_origin.h, meta.detect_current.w, meta.detect_current.h))
+
+                -- Detect dark scene, adjust cropdetect limit
+                -- between detect_limit_min and detect_limit
+                local dark_scene =
+                    meta.detect_current.y == (meta.size_origin.h - meta.detect_current.h) / 2 or meta.detect_current.x == (meta.size_origin.w - meta.detect_current.w) / 2
+
+                -- Scale adjustement on detect_limit, min 1
+                local limit_adjust_by = (limit_adjust - limit_adjust % 10) / 10
+                local limit_adjust_by = ((limit_adjust - limit_adjust_by) - (limit_adjust - limit_adjust_by) % 10) / 10
+                if limit_adjust_by == 0 then
+                    limit_adjust_by = 1
+                end
+
+                local limit = options.detect_limit
+                if not dark_scene then
+                    if limit_adjust > options.detect_limit_min then
+                        if limit_adjust - limit_adjust_by >= options.detect_limit_min then
+                            limit_adjust = limit_adjust - limit_adjust_by
+                        else
+                            limit_adjust = options.detect_limit_min
+                        end
+                        -- Debug limit_adjust change
+                        mp.msg.debug(string.format("limit_adjust=%s", limit_adjust))
+                    end
+                else
+                    if limit_adjust < limit then
+                        if limit_adjust + limit_adjust_by * 2 <= limit then
+                            limit_adjust = limit_adjust + limit_adjust_by * 2
+                        else
+                            limit_adjust = limit
+                        end
+                        -- Debug limit_adjust change
+                        mp.msg.debug(string.format("limit_adjust=%s", limit_adjust))
+                    end
+                end
+
+                if options.fixed_width then
+                    meta.detect_current.w = meta.size_origin.w
+                    meta.detect_current.x = meta.size_origin.x
+                end
+
+                -- Crop Filter:
+                -- Prevent apply same crop as previous.
+                -- Prevent crop bigger than max_aspect_ratio.
+                -- Prevent asymmetric crop.
+                -- Confirm with last detect to avoid false positive.
+                local crop_filter =
+                    (meta.detect_current.h ~= meta.apply_current.h or meta.detect_current.w ~= meta.apply_current.w) and
+                    meta.detect_current.x == (meta.size_origin.w - meta.detect_current.w) / 2 and
+                    meta.detect_current.y == (meta.size_origin.h - meta.detect_current.h) / 2 and
+                    meta.detect_current.h >= meta.size_origin.w / options.max_aspect_ratio and
+                    meta.detect_current.h == meta.detect_last.h
+
+                if crop_filter then
+                    -- Remove existing crop.
+                    remove_filter(labels.crop)
+                    -- Apply crop.
+                    mp.command(
+                        string.format(
+                            "no-osd vf pre @%s:lavfi-crop=w=%s:h=%s:x=%s:y=%s",
+                            labels.crop,
+                            meta.detect_current.w,
+                            meta.detect_current.h,
+                            meta.detect_current.x,
+                            meta.detect_current.y
+                        )
+                    )
+
+                    --Debug apply crop
+                    mp.msg.debug(string.format("apply-last=w=%s:h=%s:x=%s:y=%s", meta.apply_last.w, meta.apply_last.h, meta.apply_last.x, meta.apply_last.y))
+                    mp.msg.debug(string.format("apply-curr=w=%s:h=%s:x=%s:y=%s", meta.apply_current.w, meta.apply_current.h, meta.apply_current.x, meta.apply_current.y))
+
+                    -- Save values to compare later.
+                    meta.apply_last = {
+                        w = meta.apply_current.w,
+                        h = meta.apply_current.h,
+                        x = meta.apply_current.x,
+                        y = meta.apply_current.y
+                    }
+                    meta.apply_current = {
+                        w = meta.detect_current.w,
+                        h = meta.detect_current.h,
+                        x = meta.detect_current.x,
+                        y = meta.detect_current.y
+                    }
+                end
+                meta.detect_last = {
+                    w = meta.detect_current.w,
+                    h = meta.detect_current.h,
+                    x = meta.detect_current.x,
+                    y = meta.detect_current.y
+                }
+            end
+            -- Resume auto_crop
+            in_progress = false
+            if not paused and not toggled then
+                timers.periodic_timer:resume()
+            end
+        end
+    )
 end
 
 function cleanup()
@@ -204,129 +333,9 @@ function cleanup()
         remove_filter(value)
     end
 
-    -- Reset meta.size
+    -- Reset some values
     meta.size_origin = {}
-    -- meta.size_precrop = {}
     limit_adjust = options.detect_limit
-end
-
-function auto_crop()
-    -- Verify if there is enough time to detect crop.
-    local time_needed = options.detect_seconds
-    if is_enough_time(time_needed) then
-        return
-    end
-
-    insert_crop_filter()
-
-    -- Wait to gather data.
-    timers.crop_detect =
-        mp.add_timeout(
-        time_needed,
-        function()
-            if not collect_metadata() then
-                return
-            end
-
-            -- Debug crop detect raw value
-            mp.msg.debug(string.format("detect_last=w=%s:h=%s:x=%s:y=%s", meta.detect_last.w, meta.detect_last.h, meta.detect_last.x, meta.detect_last.y))
-            mp.msg.debug(string.format("detect_curr=w=%s:h=%s:x=%s:y=%s", meta.detect_current.w, meta.detect_current.h, meta.detect_current.x, meta.detect_current.y))
-            mp.msg.debug(string.format("apply_curr=w=%s:h=%s:x=%s:y=%s", meta.apply_current.w, meta.apply_current.h, meta.apply_current.x, meta.apply_current.y))
-            mp.msg.debug(string.format("size_origin=w=%s:h=%s detect_current:w=%s:h=%s", meta.size_origin.w, meta.size_origin.h, meta.detect_current.w, meta.detect_current.h))
-
-            -- Detect dark scene, adjust cropdetect limit
-            -- between detect_limit_min and detect_limit
-            local dark_scene =
-                meta.detect_current.y == (meta.size_origin.h - meta.detect_current.h) / 2 or meta.detect_current.x == (meta.size_origin.w - meta.detect_current.w) / 2
-
-            -- Scale adjustement on detect_limit, min 1
-            local limit_adjust_by = (limit_adjust - limit_adjust % 10) / 10
-            local limit_adjust_by = ((limit_adjust - limit_adjust_by) - (limit_adjust - limit_adjust_by) % 10) / 10
-            if limit_adjust_by == 0 then
-                limit_adjust_by = 1
-            end
-
-            local limit = options.detect_limit
-            if not dark_scene then
-                if limit_adjust > options.detect_limit_min then
-                    if limit_adjust - limit_adjust_by >= options.detect_limit_min then
-                        limit_adjust = limit_adjust - limit_adjust_by
-                    else
-                        limit_adjust = options.detect_limit_min
-                    end
-                    -- Debug limit_adjust change
-                    mp.msg.debug(string.format("limit_adjust=%s", limit_adjust))
-                end
-            else
-                if limit_adjust < limit then
-                    if limit_adjust + limit_adjust_by * 2 <= limit then
-                        limit_adjust = limit_adjust + limit_adjust_by * 2
-                    else
-                        limit_adjust = limit
-                    end
-                    -- Debug limit_adjust change
-                    mp.msg.debug(string.format("limit_adjust=%s", limit_adjust))
-                end
-            end
-
-            if options.fixed_width then
-                meta.detect_current.w = meta.size_origin.w
-                meta.detect_current.x = meta.size_origin.x
-            end
-
-            -- Crop Filter:
-            -- Prevent apply same crop as previous.
-            -- Prevent crop bigger than max_aspect_ratio.
-            -- Prevent asymmetric crop.
-            -- Confirm with last detect to avoid false positive.
-            local crop_filter =
-                (meta.detect_current.h ~= meta.apply_current.h or meta.detect_current.w ~= meta.apply_current.w) and
-                meta.detect_current.x == (meta.size_origin.w - meta.detect_current.w) / 2 and
-                meta.detect_current.y == (meta.size_origin.h - meta.detect_current.h) / 2 and
-                meta.detect_current.h >= meta.size_origin.w / options.max_aspect_ratio and
-                meta.detect_current.h == meta.detect_last.h
-
-            if crop_filter then
-                -- Remove existing crop.
-                remove_filter(labels.crop)
-                -- Apply crop.
-                mp.command(
-                    string.format(
-                        "no-osd vf pre @%s:lavfi-crop=w=%s:h=%s:x=%s:y=%s",
-                        labels.crop,
-                        meta.detect_current.w,
-                        meta.detect_current.h,
-                        meta.detect_current.x,
-                        meta.detect_current.y
-                    )
-                )
-
-                --Debug apply crop
-                mp.msg.debug(string.format("apply-last=w=%s:h=%s:x=%s:y=%s", meta.apply_last.w, meta.apply_last.h, meta.apply_last.x, meta.apply_last.y))
-                mp.msg.debug(string.format("apply-curr=w=%s:h=%s:x=%s:y=%s", meta.apply_current.w, meta.apply_current.h, meta.apply_current.x, meta.apply_current.y))
-
-                -- Save values to compare later.
-                meta.apply_last = {
-                    w = meta.apply_current.w,
-                    h = meta.apply_current.h,
-                    x = meta.apply_current.x,
-                    y = meta.apply_current.y
-                }
-                meta.apply_current = {
-                    w = meta.detect_current.w,
-                    h = meta.detect_current.h,
-                    x = meta.detect_current.x,
-                    y = meta.detect_current.y
-                }
-            end
-            meta.detect_last = {
-                w = meta.detect_current.w,
-                h = meta.detect_current.h,
-                x = meta.detect_current.x,
-                y = meta.detect_current.y
-            }
-        end
-    )
 end
 
 function on_start()
@@ -353,8 +362,7 @@ function on_start()
         function()
             -- Run periodic or once.
             if options.auto then
-                local time_needed = options.periodic_timer + options.detect_seconds
-                -- Verify if there is enough time for autocrop.
+                local time_needed = options.periodic_timer
                 if is_enough_time(time_needed) then
                     return
                 end
@@ -367,35 +375,9 @@ function on_start()
     )
 end
 
-function on_toggle()
-    if not options.auto then
-        auto_crop()
-        mp.osd_message("Autocrop once.", 3)
-    else
-        if is_filter_present(labels.crop) then
-            remove_filter(labels.crop)
-            remove_filter(labels.cropdetect)
-            meta.apply_current = meta.size_origin
-        end
-        if timers.periodic_timer:is_enabled() then
-            if not pause then
-                seek()
-                mp.osd_message("Autocrop paused.", 3)
-            end
-        else
-            if not pause then
-                resume()
-                mp.osd_message("Autocrop resumed.", 3)
-            end
-        end
-    end
-end
-
-function seek(log)
+function seek(name)
+    mp.msg.warn(string.format("Seek by %s event.", name))
     if timers.periodic_timer and timers.periodic_timer:is_enabled() then
-        if log ~= false then
-            mp.msg.warn("Seek.")
-        end
         timers.periodic_timer:kill()
         if timers.crop_detect and timers.crop_detect:is_enabled() then
             timers.crop_detect:kill()
@@ -403,11 +385,16 @@ function seek(log)
     end
 end
 
-function resume(log)
-    if timers.periodic_timer and not timers.periodic_timer:is_enabled() then
-        if log ~= false then
-            mp.msg.warn("Resume.")
-        end
+function seek_event()
+    seeking = true
+    if not paused and not toggled then
+        mp.msg.info("Seeking ...")
+    end
+end
+
+function resume(name)
+    mp.msg.warn(string.format("Resumed by %s event.", name))
+    if timers.periodic_timer and not timers.periodic_timer:is_enabled() and not in_progress then
         timers.periodic_timer:resume()
     end
 
@@ -419,24 +406,55 @@ function resume(log)
     end
 end
 
-function pause(_, bool)
-    if options.auto then
-        if bool then
-            pause = true
-            mp.msg.info("Paused.")
-            seek(false)
-            mp.unregister_event(seek)
-            mp.unregister_event(resume)
+function resume_event()
+    seeking = false
+    if not paused and not toggled then
+        mp.msg.info("Resumed.")
+    end
+end
+
+function on_toggle()
+    if not options.auto then
+        auto_crop()
+        mp.osd_message("Autocrop once.", 3)
+    else
+        if is_filter_present(labels.crop) then
+            remove_filter(labels.crop)
+            remove_filter(labels.cropdetect)
+            meta.apply_current = meta.size_origin
+        end
+        if not toggled then
+            toggled = true
+            if not paused then
+                seek("toggle")
+            end
+            mp.osd_message("Autocrop paused.", 3)
         else
-            pause = false
-            mp.msg.info("Unpaused.")
-            resume(false)
-            mp.register_event("seek", seek)
-            mp.register_event("playback-restart", resume)
+            toggled = false
+            if not paused then
+                resume("toggle")
+            end
+            mp.osd_message("Autocrop resumed.", 3)
         end
     end
 end
 
+function pause(_, bool)
+    if options.auto then
+        if bool then
+            paused = true
+            seek("pause")
+        else
+            paused = false
+            if not toggled then
+                resume("unpause")
+            end
+        end
+    end
+end
+
+mp.register_event("seek", seek_event)
+mp.register_event("playback-restart", resume_event)
 mp.add_key_binding("C", "toggle_crop", on_toggle)
 mp.observe_property("pause", "bool", pause)
 mp.register_event("end-file", cleanup)
