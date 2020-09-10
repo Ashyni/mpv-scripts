@@ -1,58 +1,43 @@
 --[[
-This script uses the lavfi cropdetect filter to automatically
-insert a crop filter with appropriate parameters for the
-currently playing video.
+This script uses the lavfi cropdetect filter to automatically insert a crop filter with appropriate parameters for the
+currently playing video, the script run continuously by default, base on periodic_timer and detect_seconds timer.
 
 It will automatically crop the video, when playback starts.
 
-Also It registers the key-binding "C" (shift+c). You can manually
-crop the video by pressing the "C" (shift+c) key.
+Also It registers the key-binding "C" (shift+c). You can manually crop the video by pressing the "C" (shift+c) key.
 
-If the "C" key is pressed again, the crop filter is removed
-restoring playback to its original state.
+If the "C" key is pressed again, the crop filter is removed restoring playback to its original state.
 
-The workflow is as follows: First, it inserts the filter
-vf=lavfi=cropdetect. After <detect_seconds> (default is 1)
-seconds, it then inserts the filter vf=crop=w:h:x:y, where
-w,h,x,y are determined from the vf-metadata gathered by
-cropdetect. The cropdetect filter is removed immediately after
-the crop filter is inserted as it is no longer needed.
+The workflow is as follows: First, it inserts the filter vf=lavfi=cropdetect. After <detect_seconds> (default is 1)
+seconds, it then inserts the filter vf=crop=w:h:x:y, where w,h,x,y are determined from the vf-metadata gathered by
+cropdetect. The cropdetect filter is removed immediately after the crop filter is inserted as it is no longer needed.
 
-Since the crop parameters are determined from the 1 second of
-video between inserting the cropdetect and crop filters, the "C"
-key should be pressed at a position in the video where the crop
-region is unambiguous (i.e., not a black frame, black background
+Since the crop parameters are determined from the 1 second of video between inserting the cropdetect and crop filters, the "C"
+key should be pressed at a position in the video where the crop region is unambiguous (i.e., not a black frame, black background
 title card, or dark scene).
 
-The default options can be overridden by adding
-script-opts-append=autocrop-<parameter>=<value> into mpv.conf
+The default options can be overridden by adding script-opts-append=autocrop-<parameter>=<value> into mpv.conf
 
 List of available parameters (For default values, see <options>)：
 
 auto: bool - Whether to automatically apply crop periodicly. 
-    If you want a single crop at start, set it to
-    false or add "script-opts-append=autocrop-auto=no" into
-    mpv.conf.
+    If you want a single crop at start, set it to false or add "script-opts-append=autocrop-auto=no" into mpv.conf.
 
-periodic_timer: seconds - Delay before starting crop in auto mode.
+periodic_timer: seconds - Delay between crop detect in auto mode.
 
 detect_limit: number[0-255] - Black threshold for cropdetect.
     Smaller values will generally result in less cropping.
     See limit of https://ffmpeg.org/ffmpeg-filters.html#cropdetect
 
-detect_round: number[2^n] -  The value which the width/height
-    should be divisible by. Smaller values have better detection
-    accuracy. If you have problems with other filters,
-    you can try to set it to 4 or 16.
+detect_round: number[2^n] -  The value which the width/height should be divisible by 2. Smaller values have better detection
+    accuracy. If you have problems with other filters, you can try to set it to 4 or 16.
     See round of https://ffmpeg.org/ffmpeg-filters.html#cropdetect
 
 detect_seconds: seconds - How long to gather cropdetect data.
-    Increasing this may be desirable to allow cropdetect more
-    time to collect data.
+    Increasing this may be desirable to allow cropdetect more time to collect data.
 
-xxx_aspect_ratio: [21.6/9] or [2.4] - min_aspect_ratio is used to
-disable the script if the video is over that ratio (already crop).
-max_aspect_ratio is used to prevent cropping over that ratio.
+min/max_aspect_ratio: [21.6/9] or [2.4] - min_aspect_ratio is used to disable the script if the video is over that ratio (already crop).
+    max_aspect_ratio is used to prevent cropping over that ratio.
 --]]
 require "mp.msg"
 require "mp.options"
