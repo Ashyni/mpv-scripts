@@ -30,7 +30,7 @@ detect_limit: number[0-255] - Black threshold for cropdetect.
     See limit of https://ffmpeg.org/ffmpeg-filters.html#cropdetect
 
 detect_round: number[2^n] -  The value which the width/height should be divisible by 2. Smaller values have better detection
-    accuracy. If you have problems with other filters, you can try to set it to 4 or 16.
+    accuracy. If you have problems with other filters, you can limit_adjust_try to set it to 4 or 16.
     See round of https://ffmpeg.org/ffmpeg-filters.html#cropdetect
 
 detect_seconds: seconds - How long to gather cropdetect data.
@@ -68,6 +68,8 @@ local labels = {
     cropdetect = string.format("%s-cropdetect", label_prefix)
 }
 local limit_adjust = options.detect_limit
+local limit_adjust_by = 1
+local limit_adjust_try = 0
 local timers = {}
 -- States
 local in_progress = nil
@@ -77,7 +79,7 @@ local seeking = nil
 
 -- Multi-Dimensional Array metadata
 meta = {}
-key1 = {"size_origin", "size_precrop", "apply_current", "apply_last", "detect_current", "detect_last"}
+key1 = {"size_origin", "apply_current", "apply_last", "detect_current", "detect_last"}
 key2 = {"w", "h", "x", "y"}
 for k, v in pairs(key1) do
     meta[v] = {key2}
@@ -86,13 +88,6 @@ end
 function init_size()
     local width = mp.get_property_native("width")
     local height = mp.get_property_native("height")
-
-    -- repeat
-    --     width = mp.get_property_native("width")
-    --     height = mp.get_property_native("height")
-    -- until width ~= "0" and height ~= "0" or width ~= "" and height ~= ""
-    -- mp.msg.info(string.format("size_origin width=%s, height=%s", width, height))
-
     meta.size_origin = {
         w = width,
         h = height,
@@ -195,26 +190,51 @@ function auto_crop()
         time_needed,
         function()
             if collect_metadata() then
+                local symmetric_y = meta.detect_current.y == (meta.size_origin.h - meta.detect_current.h) / 2
+                local in_tolerance_y =
+                    meta.detect_current.y >= (meta.size_origin.h - meta.detect_current.h - options.height_pixel_tolerance) / 2 and
+                    meta.detect_current.y <= (meta.size_origin.h - meta.detect_current.h + options.height_pixel_tolerance) / 2
+
                 -- Debug crop detect raw value
+                local state_current_y
+                if symmetric_y then
+                    state_current_y = "Symmetric"
+                elseif in_tolerance_y then
+                    state_current_y = "Asymmetric in tolerance"
+                else
+                    state_current_y = "Asymmetric"
+                end
                 mp.msg.debug(string.format("detect_last=w=%s:h=%s:x=%s:y=%s", meta.detect_last.w, meta.detect_last.h, meta.detect_last.x, meta.detect_last.y))
-                mp.msg.debug(string.format("detect_curr=w=%s:h=%s:x=%s:y=%s", meta.detect_current.w, meta.detect_current.h, meta.detect_current.x, meta.detect_current.y))
+                mp.msg.debug(
+                    string.format(
+                        "detect_curr=w=%s:h=%s:x=%s:y=%s, Y:%s",
+                        meta.detect_current.w,
+                        meta.detect_current.h,
+                        meta.detect_current.x,
+                        meta.detect_current.y,
+                        state_current_y
+                    )
+                )
                 mp.msg.debug(string.format("apply_curr=w=%s:h=%s:x=%s:y=%s", meta.apply_current.w, meta.apply_current.h, meta.apply_current.x, meta.apply_current.y))
                 mp.msg.debug(string.format("size_origin=w=%s:h=%s detect_current:w=%s:h=%s", meta.size_origin.w, meta.size_origin.h, meta.detect_current.w, meta.detect_current.h))
 
-                -- Detect dark scene, adjust cropdetect limit
+                -- Auto adjust black threshold
                 -- between detect_limit_min and detect_limit
-                local dark_scene =
-                    meta.detect_current.y == (meta.size_origin.h - meta.detect_current.h) / 2 or meta.detect_current.x == (meta.size_origin.w - meta.detect_current.w) / 2
-
-                -- Scale adjustement on detect_limit, min 1
-                local limit_adjust_by = (limit_adjust - limit_adjust % 10) / 10
-                local limit_adjust_by = ((limit_adjust - limit_adjust_by) - (limit_adjust - limit_adjust_by) % 10) / 10
-                if limit_adjust_by == 0 then
-                    limit_adjust_by = 1
-                end
-
                 local limit = options.detect_limit
-                if not dark_scene then
+                if in_tolerance_y then
+                    if limit_adjust < limit and limit_adjust_try > 0 then
+                        if limit_adjust + limit_adjust_by * 2 <= limit then
+                            limit_adjust = limit_adjust + limit_adjust_by * 2
+                        else
+                            limit_adjust = limit
+                        end
+                        limit_adjust_try = 0
+                        -- Debug limit_adjust change
+                        mp.msg.debug(string.format("increase limit_adjust=%s", limit_adjust))
+                    else
+                        limit_adjust_try = 1
+                    end
+                else
                     if limit_adjust > options.detect_limit_min then
                         if limit_adjust - limit_adjust_by >= options.detect_limit_min then
                             limit_adjust = limit_adjust - limit_adjust_by
@@ -222,17 +242,7 @@ function auto_crop()
                             limit_adjust = options.detect_limit_min
                         end
                         -- Debug limit_adjust change
-                        mp.msg.debug(string.format("limit_adjust=%s", limit_adjust))
-                    end
-                else
-                    if limit_adjust < limit then
-                        if limit_adjust + limit_adjust_by * 2 <= limit then
-                            limit_adjust = limit_adjust + limit_adjust_by * 2
-                        else
-                            limit_adjust = limit
-                        end
-                        -- Debug limit_adjust change
-                        mp.msg.debug(string.format("limit_adjust=%s", limit_adjust))
+                        mp.msg.debug(string.format("decrease limit_adjust=%s", limit_adjust))
                     end
                 end
 
@@ -249,13 +259,11 @@ function auto_crop()
                 local crop_filter =
                     (meta.detect_current.h ~= meta.apply_current.h or meta.detect_current.w ~= meta.apply_current.w) and
                     meta.detect_current.x == (meta.size_origin.w - meta.detect_current.w) / 2 and
-                    meta.detect_current.y == (meta.size_origin.h - meta.detect_current.h) / 2 and
+                    in_tolerance_y and
                     meta.detect_current.h >= meta.size_origin.w / options.max_aspect_ratio and
                     meta.detect_current.h == meta.detect_last.h
 
                 if crop_filter then
-                    -- Remove existing crop.
-                    remove_filter(labels.crop)
                     -- Apply crop.
                     mp.command(
                         string.format(
@@ -332,7 +340,7 @@ function on_start()
         return
     end
 
-    cleanup()
+    -- cleanup()
 
     init_size()
 
