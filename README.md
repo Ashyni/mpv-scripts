@@ -11,7 +11,7 @@ Script to automatically crop top/bottom black bar on Ultra Wide Screen (21:9).
 - Periodic or Single scan/crop.
 - Prevent crop bigger than option max_aspect_ratio.
 - Prevent asymmetric crop.
-- Detect dark scene and auto adjust black threshold.
+- Auto adjust black threshold.
 - Auto pause the script when seeking/loading.
 
 ### Shortcut 
