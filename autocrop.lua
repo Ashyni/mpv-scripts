@@ -30,7 +30,7 @@ detect_limit: number[0-255] - Black threshold for cropdetect.
     See limit of https://ffmpeg.org/ffmpeg-filters.html#cropdetect
 
 detect_round: number[2^n] -  The value which the width/height should be divisible by 2. Smaller values have better detection
-    accuracy. If you have problems with other filters, you can limit_adjust_try to set it to 4 or 16.
+    accuracy. If you have problems with other filters, you can try to set it to 4 or 16.
     See round of https://ffmpeg.org/ffmpeg-filters.html#cropdetect
 
 detect_seconds: seconds - How long to gather cropdetect data.
@@ -69,7 +69,6 @@ local labels = {
 }
 local limit_adjust = options.detect_limit
 local limit_adjust_by = 1
-local limit_adjust_try = 0
 local timers = {}
 -- States
 local in_progress = nil
@@ -189,18 +188,31 @@ function auto_crop()
         mp.add_timeout(
         time_needed,
         function()
-            if collect_metadata() then
+            if collect_metadata() and not paused and not toggled then
+                if options.fixed_width then
+                    meta.detect_current.w = meta.size_origin.w
+                    meta.detect_current.x = meta.size_origin.x
+                end
+
+                local not_already_apply = (meta.detect_current.h ~= meta.apply_current.h or meta.detect_current.w ~= meta.apply_current.w)
+                local symmetric_x = meta.detect_current.x == (meta.size_origin.w - meta.detect_current.w) / 2
                 local symmetric_y = meta.detect_current.y == (meta.size_origin.h - meta.detect_current.h) / 2
                 local in_tolerance_y =
                     meta.detect_current.y >= (meta.size_origin.h - meta.detect_current.h - options.height_pixel_tolerance) / 2 and
                     meta.detect_current.y <= (meta.size_origin.h - meta.detect_current.h + options.height_pixel_tolerance) / 2
+                local allow_in_tolerance_height_change =
+                    meta.detect_current.h >= meta.apply_current.h - options.height_pixel_tolerance and
+                    meta.detect_current.h <= meta.apply_current.h + options.height_pixel_tolerance
+                local max_aspect_ratio_h = meta.detect_current.h >= meta.size_origin.w / options.max_aspect_ratio
+                local crop_confirmation = meta.detect_current.h == meta.detect_last.h
+                local detect_size_origin = meta.detect_current.h == meta.size_origin.h
 
                 -- Debug crop detect raw value
                 local state_current_y
                 if symmetric_y then
                     state_current_y = "Symmetric"
                 elseif in_tolerance_y then
-                    state_current_y = "Asymmetric in tolerance"
+                    state_current_y = "In tolerance"
                 else
                     state_current_y = "Asymmetric"
                 end
@@ -222,17 +234,17 @@ function auto_crop()
                 -- between detect_limit_min and detect_limit
                 local limit = options.detect_limit
                 if in_tolerance_y then
-                    if limit_adjust < limit and limit_adjust_try > 0 then
-                        if limit_adjust + limit_adjust_by * 2 <= limit then
-                            limit_adjust = limit_adjust + limit_adjust_by * 2
-                        else
-                            limit_adjust = limit
+                    if limit_adjust < limit then
+                        if detect_size_origin then
+                            if limit_adjust + limit_adjust_by <= limit then
+                                limit_adjust = limit_adjust + limit_adjust_by
+                            else
+                                limit_adjust = limit
+                            end
+                            -- Debug limit_adjust change
+                            mp.msg.debug(string.format("increase limit_adjust=%s", limit_adjust))
+                        -- end
                         end
-                        limit_adjust_try = 0
-                        -- Debug limit_adjust change
-                        mp.msg.debug(string.format("increase limit_adjust=%s", limit_adjust))
-                    else
-                        limit_adjust_try = 1
                     end
                 else
                     if limit_adjust > options.detect_limit_min then
@@ -246,22 +258,12 @@ function auto_crop()
                     end
                 end
 
-                if options.fixed_width then
-                    meta.detect_current.w = meta.size_origin.w
-                    meta.detect_current.x = meta.size_origin.x
-                end
-
                 -- Crop Filter:
                 -- Prevent apply same crop as previous.
                 -- Prevent crop bigger than max_aspect_ratio.
                 -- Prevent asymmetric crop.
                 -- Confirm with last detect to avoid false positive.
-                local crop_filter =
-                    (meta.detect_current.h ~= meta.apply_current.h or meta.detect_current.w ~= meta.apply_current.w) and
-                    meta.detect_current.x == (meta.size_origin.w - meta.detect_current.w) / 2 and
-                    in_tolerance_y and
-                    meta.detect_current.h >= meta.size_origin.w / options.max_aspect_ratio and
-                    meta.detect_current.h == meta.detect_last.h
+                local crop_filter = not_already_apply and symmetric_x and in_tolerance_y and not allow_in_tolerance_height_change and max_aspect_ratio_h and crop_confirmation
 
                 if crop_filter then
                     -- Apply crop.
