@@ -112,9 +112,10 @@ function is_enough_time(seconds)
     local playtime_remaining = mp.get_property_native("playtime-remaining")
     if playtime_remaining and time_needed > playtime_remaining then
         mp.msg.warn("Not enough time for autocrop.")
-        seek(false)
+        seek("no-time")
         return false
     end
+    return true
 end
 
 function is_cropable()
@@ -177,7 +178,7 @@ function auto_crop()
 
     -- Verify if there is enough time to detect crop.
     local time_needed = options.detect_seconds
-    if is_enough_time(time_needed) then
+    if not is_enough_time(time_needed) then
         return
     end
 
@@ -236,8 +237,8 @@ function auto_crop()
                 if in_tolerance_y then
                     if limit_adjust < limit then
                         if detect_size_origin then
-                            if limit_adjust + limit_adjust_by <= limit then
-                                limit_adjust = limit_adjust + limit_adjust_by
+                            if limit_adjust + limit_adjust_by * 2 <= limit then
+                                limit_adjust = limit_adjust + limit_adjust_by * 2
                             else
                                 limit_adjust = limit
                             end
@@ -358,10 +359,7 @@ function on_start()
             -- Run periodic or once.
             if options.auto then
                 local time_needed = options.periodic_timer
-                if is_enough_time(time_needed) then
-                    return
-                end
-
+                
                 timers.periodic_timer = mp.add_periodic_timer(time_needed, auto_crop)
             else
                 auto_crop()
