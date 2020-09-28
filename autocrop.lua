@@ -359,7 +359,6 @@ function on_start()
             -- Run periodic or once.
             if options.auto then
                 local time_needed = options.periodic_timer
-                
                 timers.periodic_timer = mp.add_periodic_timer(time_needed, auto_crop)
             else
                 auto_crop()
