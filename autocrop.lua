@@ -121,17 +121,11 @@ end
 function is_cropable()
     local vid = mp.get_property_native("vid")
     local is_album = vid and mp.get_property_native(string.format("track-list/%s/albumart", vid)) or false
-
     return vid and not is_album
 end
 
 function insert_crop_filter()
-    -- Insert the cropdetect filter.
-    local limit = options.detect_limit
-    local round = options.detect_round
-    local reset = options.reset
-
-    mp.command(string.format("no-osd vf pre @%s:cropdetect=limit=%d/255:round=%d:reset=%d", labels.cropdetect, limit_adjust, round, reset))
+    mp.command(string.format("no-osd vf pre @%s:lavfi-cropdetect=limit=%d/255:round=%d:reset=%d", labels.cropdetect, limit_adjust, options.detect_round, options.reset))
 end
 
 function remove_filter(label)
@@ -244,7 +238,6 @@ function auto_crop()
                             end
                             -- Debug limit_adjust change
                             mp.msg.debug(string.format("increase limit_adjust=%s", limit_adjust))
-                        -- end
                         end
                     end
                 else
