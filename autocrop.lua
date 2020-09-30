@@ -77,7 +77,7 @@ local seeking = nil
 
 -- Multi-Dimensional Array metadata
 meta = {}
-key1 = {"size_origin", "apply_current", "apply_last", "detect_current"}
+key1 = {"size_origin", "apply_current", "apply_last", "detect_current", "detect_last"}
 key2 = {"w", "h", "x", "y"}
 for k, v in pairs(key1) do
     meta[v] = {key2}
@@ -210,6 +210,7 @@ function auto_crop()
                 else
                     state_current_y = "Asymmetric"
                 end
+                mp.msg.debug(string.format("detect_last=w=%s:h=%s:x=%s:y=%s", meta.detect_last.w, meta.detect_last.h, meta.detect_last.x, meta.detect_last.y))
                 mp.msg.debug(
                     string.format(
                         "detect_curr=w=%s:h=%s:x=%s:y=%s, Y:%s",
@@ -288,6 +289,12 @@ function auto_crop()
                         y = meta.detect_current.y
                     }
                 end
+                meta.detect_last = {
+                    w = meta.detect_current.w,
+                    h = meta.detect_current.h,
+                    x = meta.detect_current.x,
+                    y = meta.detect_current.y
+                }
             end
             -- Resume auto_crop
             in_progress = false
