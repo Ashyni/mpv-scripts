@@ -130,7 +130,7 @@ function insert_crop_filter()
     local insert_crop_filter_command =
         mp.command(string.format("no-osd vf pre @%s:lavfi-cropdetect=limit=%d/255:round=%d:reset=%d", labels.cropdetect, limit_adjust, options.detect_round, options.reset))
     if not insert_crop_filter_command then
-        mp.msg.info("Does vf=help as #1 line in mvp.conf, return libavfilter list with crop/cropdetect in log?")
+        mp.msg.error("Does vf=help as #1 line in mvp.conf, return libavfilter list with crop/cropdetect in log?")
         cleanup()
         return false
     end
@@ -336,7 +336,7 @@ function on_start()
     init_size()
 
     if options.min_aspect_ratio < meta.size_origin.w / meta.size_origin.h then
-        mp.msg.info("Disable script, AR > min_aspect_ratio.")
+        mp.msg.info("Disable script, Aspect Ratio > min_aspect_ratio.")
         return
     end
 
@@ -356,7 +356,7 @@ function on_start()
 end
 
 function seek(name)
-    mp.msg.warn(string.format("Stop by %s event.", name))
+    mp.msg.info(string.format("Stop by %s event.", name))
     if timers.periodic_timer and timers.periodic_timer:is_enabled() then
         timers.periodic_timer:kill()
         if timers.crop_detect and timers.crop_detect:is_enabled() then
@@ -367,13 +367,10 @@ end
 
 function seek_event()
     seeking = true
-    if not paused and not toggled then
-        mp.msg.info("Seeking ...")
-    end
 end
 
 function resume(name)
-    mp.msg.warn(string.format("Resumed by %s event.", name))
+    mp.msg.info(string.format("Resumed by %s event.", name))
     if timers.periodic_timer and not timers.periodic_timer:is_enabled() and not in_progress then
         timers.periodic_timer:resume()
     end
@@ -388,9 +385,6 @@ end
 
 function resume_event()
     seeking = false
-    if not paused and not toggled then
-        mp.msg.info("Resumed.")
-    end
 end
 
 function on_toggle()
