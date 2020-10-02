@@ -85,10 +85,16 @@ local toggled = nil
 local seeking = nil
 -- metadata
 local meta = {}
-local key1 = {"size_origin", "apply_current", "detect_current", "detect_last"}
-local key2 = {"w", "h", "x", "y"}
-for k, v in pairs(key1) do
-    meta[v] = {key2}
+local entity = {"size_origin", "apply_current", "detect_current", "detect_last"}
+local unit = {"w", "h", "x", "y"}
+for k, v in pairs(entity) do
+    meta[v] = {unit}
+end
+
+function meta_transfert(from, to)
+    for k, v in pairs(unit) do
+        to[v] = from[v]
+    end
 end
 
 function init_size()
@@ -100,7 +106,7 @@ function init_size()
         x = 0,
         y = 0
     }
-    meta.apply_current = meta.size_origin
+    meta_transfert(meta.size_origin, meta.apply_current)
 end
 
 function is_filter_present(label)
@@ -198,23 +204,24 @@ function auto_crop()
                 end
 
                 local not_already_apply = (meta.detect_current.h ~= meta.apply_current.h or meta.detect_current.w ~= meta.apply_current.w)
+                -- Invalid is generally black screen
                 local invalid_h = meta.detect_current.h < 0
                 local symmetric_x = not invalid_h and meta.detect_current.x == (meta.size_origin.w - meta.detect_current.w) / 2
                 local symmetric_y = not invalid_h and meta.detect_current.y == (meta.size_origin.h - meta.detect_current.h) / 2
                 local in_tolerance_y =
                     not invalid_h and meta.detect_current.y >= (meta.size_origin.h - meta.detect_current.h - options.height_pixel_tolerance) / 2 and
                     meta.detect_current.y <= (meta.size_origin.h - meta.detect_current.h + options.height_pixel_tolerance) / 2
-                local height_pxl_change =
+                local pxl_change_h =
                     meta.detect_current.h >= meta.apply_current.h - options.height_pixel_tolerance and
                     meta.detect_current.h <= meta.apply_current.h + options.height_pixel_tolerance
-                local height_pct_change =
+                local pct_change_h =
                     meta.detect_current.h >= meta.apply_current.h - meta.apply_current.h * options.height_pct_tolerance and
                     meta.detect_current.h <= meta.apply_current.h + meta.apply_current.h * height_pct_tolerance_up
                 local max_aspect_ratio_h = meta.detect_current.h >= meta.size_origin.w / options.max_aspect_ratio
                 local detect_confirmation = meta.detect_current.h == meta.detect_last.h
                 local detect_size_origin = meta.detect_current.h == meta.size_origin.h
 
-                -- Debug crop detect raw value
+                -- Debug cropdetect meta
                 --[[ local state_current_y
                 if symmetric_y then
                     state_current_y = "Symmetric"
@@ -263,8 +270,7 @@ function auto_crop()
                 end
 
                 -- Crop Filter:
-                local crop_filter =
-                    not_already_apply and symmetric_x and in_tolerance_y and not height_pxl_change and not height_pct_change and max_aspect_ratio_h and detect_confirmation
+                local crop_filter = not_already_apply and symmetric_x and in_tolerance_y and not pxl_change_h and not pct_change_h and max_aspect_ratio_h and detect_confirmation
 
                 if crop_filter then
                     -- Apply crop.
@@ -280,19 +286,9 @@ function auto_crop()
                     )
 
                     -- Save values to compare later.
-                    meta.apply_current = {
-                        w = meta.detect_current.w,
-                        h = meta.detect_current.h,
-                        x = meta.detect_current.x,
-                        y = meta.detect_current.y
-                    }
+                    meta_transfert(meta.detect_current, meta.apply_current)
                 end
-                meta.detect_last = {
-                    w = meta.detect_current.w,
-                    h = meta.detect_current.h,
-                    x = meta.detect_current.x,
-                    y = meta.detect_current.y
-                }
+                meta_transfert(meta.detect_current, meta.detect_last)
             end
             -- Resume auto_crop
             in_progress = false
@@ -392,7 +388,7 @@ function on_toggle()
         if is_filter_present(labels.crop) then
             remove_filter(labels.crop)
             remove_filter(labels.cropdetect)
-            meta.apply_current = meta.size_origin
+            meta_transfert(meta.size_origin, meta.apply_current)
         end
         if not toggled then
             toggled = true
