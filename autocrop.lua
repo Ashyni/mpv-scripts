@@ -62,6 +62,12 @@ local options = {
 }
 read_options(options)
 
+if not options.enable then
+    mp.msg.info("Disable script.")
+    return
+end
+
+-- Init variables
 local label_prefix = mp.get_script_name()
 local labels = {
     crop = string.format("%s-crop", label_prefix),
@@ -72,16 +78,15 @@ local limit_max = options.detect_limit
 local limit_adjust = options.detect_limit
 local limit_adjust_by = 1
 local timers = {}
--- States
+-- states
 local in_progress = nil
 local paused = nil
 local toggled = nil
 local seeking = nil
-
--- Multi-Dimensional Array metadata
-meta = {}
-key1 = {"size_origin", "apply_current", "detect_current", "detect_last"}
-key2 = {"w", "h", "x", "y"}
+-- metadata
+local meta = {}
+local key1 = {"size_origin", "apply_current", "detect_current", "detect_last"}
+local key2 = {"w", "h", "x", "y"}
 for k, v in pairs(key1) do
     meta[v] = {key2}
 end
@@ -109,7 +114,6 @@ function is_filter_present(label)
 end
 
 function is_enough_time(seconds)
-    -- Plus 1 second for deviation.
     local time_needed = seconds + 1
     local playtime_remaining = mp.get_property_native("playtime-remaining")
     if playtime_remaining and time_needed > playtime_remaining then
@@ -130,7 +134,7 @@ function insert_crop_filter()
     local insert_crop_filter_command =
         mp.command(string.format("no-osd vf pre @%s:lavfi-cropdetect=limit=%d/255:round=%d:reset=%d", labels.cropdetect, limit_adjust, options.detect_round, options.reset))
     if not insert_crop_filter_command then
-        mp.msg.error("Does vf=help as #1 line in mvp.conf, return libavfilter list with crop/cropdetect in log?")
+        mp.msg.error("Does vf=help as #1 line in mvp.conf return libavfilter list with crop/cropdetect in log?")
         cleanup()
         return false
     end
@@ -259,10 +263,6 @@ function auto_crop()
                 end
 
                 -- Crop Filter:
-                -- Prevent apply same crop as previous.
-                -- Prevent crop bigger than max_aspect_ratio.
-                -- Prevent asymmetric crop.
-                -- Confirm with last detect to avoid false positive.
                 local crop_filter =
                     not_already_apply and symmetric_x and in_tolerance_y and not height_pxl_change and not height_pct_change and max_aspect_ratio_h and detect_confirmation
 
@@ -325,10 +325,7 @@ function cleanup()
 end
 
 function on_start()
-    if not options.enable then
-        mp.msg.info("Disable script.")
-        return
-    elseif not is_cropable() then
+    if not is_cropable() then
         mp.msg.warn("Only works for videos.")
         return
     end
