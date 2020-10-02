@@ -90,8 +90,17 @@ local unit = {"w", "h", "x", "y"}
 for k, v in pairs(entity) do
     meta[v] = {unit}
 end
+local meta_count = {}
 
-function meta_transfert(from, to)
+function meta_counter(meta)
+    local k = string.format("w=%s:h=%s:x=%s:y=%s", meta.w, meta.h, meta.x, meta.y)
+    if not meta_count[k] then
+        meta_count[k] = 0
+    end
+    meta_count[k] = meta_count[k] + 1
+end
+
+function meta_copy(from, to)
     for k, v in pairs(unit) do
         to[v] = from[v]
     end
@@ -106,7 +115,7 @@ function init_size()
         x = 0,
         y = 0
     }
-    meta_transfert(meta.size_origin, meta.apply_current)
+    meta_copy(meta.size_origin, meta.apply_current)
 end
 
 function is_filter_present(label)
@@ -249,6 +258,7 @@ function auto_crop()
                 -- Auto adjust black threshold
                 if not invalid_h then
                     if in_tolerance_y then
+                        meta_counter(meta.detect_current)
                         if limit_adjust < limit_max then
                             if detect_size_origin then
                                 if limit_adjust + limit_adjust_by + 1 <= limit_max then
@@ -286,9 +296,13 @@ function auto_crop()
                     )
 
                     -- Save values to compare later.
-                    meta_transfert(meta.detect_current, meta.apply_current)
+                    meta_copy(meta.detect_current, meta.apply_current)
                 end
-                meta_transfert(meta.detect_current, meta.detect_last)
+                -- Debug meta_count
+                --[[ for k, v in pairs(meta_count) do
+                    mp.msg.info(string.format("%s %s",k, v))
+                end ]]
+                meta_copy(meta.detect_current, meta.detect_last)
             end
             -- Resume auto_crop
             in_progress = false
@@ -316,6 +330,7 @@ function cleanup()
     end
 
     -- Reset some values
+    meta_count = {}
     meta.size_origin = {}
     limit_adjust = options.detect_limit
 end
@@ -349,9 +364,9 @@ function on_start()
 end
 
 function seek(name)
-    mp.msg.info(string.format("Stop by %s event.", name))
     if timers.periodic_timer and timers.periodic_timer:is_enabled() then
         timers.periodic_timer:kill()
+        mp.msg.info(string.format("Stop by %s event.", name))
         if timers.crop_detect and timers.crop_detect:is_enabled() then
             timers.crop_detect:kill()
         end
@@ -363,9 +378,9 @@ function seek_event()
 end
 
 function resume(name)
-    mp.msg.info(string.format("Resumed by %s event.", name))
     if timers.periodic_timer and not timers.periodic_timer:is_enabled() and not in_progress then
         timers.periodic_timer:resume()
+        mp.msg.info(string.format("Resumed by %s event.", name))
     end
 
     local playback_time = mp.get_property_native("playback-time")
@@ -388,7 +403,7 @@ function on_toggle()
         if is_filter_present(labels.crop) then
             remove_filter(labels.crop)
             remove_filter(labels.cropdetect)
-            meta_transfert(meta.size_origin, meta.apply_current)
+            meta_copy(meta.size_origin, meta.apply_current)
         end
         if not toggled then
             toggled = true
