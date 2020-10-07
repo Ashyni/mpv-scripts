@@ -50,15 +50,14 @@ local options = {
     -- crop behavior
     min_aspect_ratio = 21.6 / 9,
     max_aspect_ratio = 21.6 / 9,
-    width_pixel_tolerance = 4,
-    height_pixel_tolerance = 4,
-    height_pct_tolerance = 0.038,
+    width_pxl_margin = 4,
+    height_pxl_margin = 4,
+    height_pct_margin = 0.038,
     fixed_width = true,
     -- cropdetect
     detect_limit = 24,
     detect_round = 2,
-    detect_seconds = 0.4,
-    reset = 0
+    detect_seconds = 0.45
 }
 read_options(options)
 
@@ -73,16 +72,14 @@ local labels = {
     crop = string.format("%s-crop", label_prefix),
     cropdetect = string.format("%s-cropdetect", label_prefix)
 }
-local height_pct_tolerance_up = (100 * options.height_pct_tolerance) / (100 - 100 * options.height_pct_tolerance)
+local height_pct_margin_up = (100 * options.height_pct_margin) / (100 - 100 * options.height_pct_margin)
+local detect_seconds_adjust = options.detect_seconds
 local limit_max = options.detect_limit
 local limit_adjust = options.detect_limit
 local limit_adjust_by = 1
 local timers = {}
 -- states
-local in_progress = nil
-local paused = nil
-local toggled = nil
-local seeking = nil
+local in_progress, paused, toggled, seeking
 -- metadata
 local meta = {}
 local entity = {"size_origin", "apply_current", "detect_current", "detect_last"}
@@ -92,18 +89,75 @@ for k, v in pairs(entity) do
 end
 local meta_count = {}
 
-function meta_counter(meta)
-    local k = string.format("w=%s:h=%s:x=%s:y=%s", meta.w, meta.h, meta.x, meta.y)
-    if not meta_count[k] then
-        meta_count[k] = 0
-    end
-    meta_count[k] = meta_count[k] + 1
-end
-
 function meta_copy(from, to)
     for k, v in pairs(unit) do
         to[v] = from[v]
     end
+end
+
+function meta_stats(meta, shape, debug)
+    local sym, in_tol = 0, 0
+    local is_majority, cond1_r, return_shape
+    -- Shape Majority
+    for k, k1 in pairs(meta_count) do
+        if meta_count[k].shape_y == "Symmetric" then
+            sym = sym + meta_count[k].count
+        else
+            in_tol = in_tol + meta_count[k].count
+        end
+    end
+    if sym > in_tol then
+        return_shape = true
+        is_majority = "Symmetric"
+    else
+        return_shape = false
+        is_majority = "In Tolerance"
+    end
+
+    -- Debug
+    if debug then
+        mp.msg.info("Meta Stats:")
+        mp.msg.info(string.format("Shape majority is %s, %d > %d", is_majority, sym, in_tol))
+        for k, k1 in pairs(meta_count) do
+            if type(k) ~= "table" then
+                mp.msg.info(string.format("%s count=%s shape_y=%s cond1=%s", k, meta_count[k].count, meta_count[k].shape_y, meta_count[k].cond1))
+            end
+        end
+        return
+    end
+
+    local meta_whxy = string.format("w=%s:h=%s:x=%s:y=%s", meta.w, meta.h, meta.x, meta.y)
+    if not meta_count[meta_whxy] then
+        meta_count[meta_whxy] = {unit}
+        meta_count[meta_whxy].count = 0
+        meta_count[meta_whxy].shape_y = shape
+        meta_copy(meta, meta_count[meta_whxy])
+    end
+    meta_count[meta_whxy].count = meta_count[meta_whxy].count + 1
+
+    -- Cond1
+    for k, k1 in pairs(meta_count) do
+        cond1_y, cond1_n = 0, 0
+        for k2, k3 in pairs(meta_count) do
+            if meta_count[k] ~= meta_count[k2] then
+                if meta_count[k].shape_y == is_majority and meta_count[k].count / 5 > meta_count[k2].count then
+                    cond1_y = cond1_y + 1
+                else
+                    cond1_n = cond1_n + 1
+                end
+            end
+        end
+
+        if cond1_y > cond1_n or (cond1_y + cond1_n) == 0 then
+            cond1_r = true
+            meta_count[k].cond1 = "yes"
+        else
+            cond1_r = false
+            meta_count[k].cond1 = "no"
+        end
+    end
+
+    return return_shape
 end
 
 function init_size()
@@ -147,7 +201,7 @@ end
 
 function insert_crop_filter()
     local insert_crop_filter_command =
-        mp.command(string.format("no-osd vf pre @%s:lavfi-cropdetect=limit=%d/255:round=%d:reset=%d", labels.cropdetect, limit_adjust, options.detect_round, options.reset))
+        mp.command(string.format("no-osd vf pre @%s:lavfi-cropdetect=limit=%d/255:round=%d:reset=0", labels.cropdetect, limit_adjust, options.detect_round))
     if not insert_crop_filter_command then
         mp.msg.error("Does vf=help as #1 line in mvp.conf return libavfilter list with crop/cropdetect in log?")
         cleanup()
@@ -163,22 +217,26 @@ function remove_filter(label)
 end
 
 function collect_metadata()
-    -- Get the metadata and remove the cropdetect filter.
-    local cropdetect_metadata = mp.get_property_native(string.format("vf-metadata/%s", labels.cropdetect))
+    local cropdetect_metadata
+    repeat
+        cropdetect_metadata = mp.get_property_native(string.format("vf-metadata/%s", labels.cropdetect))
+        if paused or toggled or seeking then
+            break
+        end
+    until cropdetect_metadata and cropdetect_metadata["lavfi.cropdetect.w"]
+    -- Remove filter to reset detection.
     remove_filter(labels.cropdetect)
-
-    -- Verify the existence of metadata and make them usable.
-    if cropdetect_metadata then
+    if cropdetect_metadata and cropdetect_metadata["lavfi.cropdetect.w"] then
+        -- Make metadata usable.
         meta.detect_current = {
             w = tonumber(cropdetect_metadata["lavfi.cropdetect.w"]),
             h = tonumber(cropdetect_metadata["lavfi.cropdetect.h"]),
             x = tonumber(cropdetect_metadata["lavfi.cropdetect.x"]),
             y = tonumber(cropdetect_metadata["lavfi.cropdetect.y"])
         }
-        if not (meta.detect_current.w and meta.detect_current.h and meta.detect_current.x and meta.detect_current.y) then
-            if not seeking and not paused and not toggled then
-                mp.msg.warn("Empty crop data. If repeated, increase detect_seconds")
-            end
+        if meta.detect_current.w < 0 or meta.detect_current.h < 0 then
+            -- Invalid data, probably a black screen
+            detect_seconds_adjust = options.detect_seconds
             return false
         end
         return true
@@ -192,7 +250,7 @@ function auto_crop()
     timers.periodic_timer:stop()
 
     -- Verify if there is enough time to detect crop.
-    local time_needed = options.detect_seconds
+    local time_needed = detect_seconds_adjust
     if not is_enough_time(time_needed) then
         return
     end
@@ -212,36 +270,32 @@ function auto_crop()
                     meta.detect_current.x = meta.size_origin.x
                 end
 
-                local not_already_apply = (meta.detect_current.h ~= meta.apply_current.h or meta.detect_current.w ~= meta.apply_current.w)
-                -- Invalid is generally black screen
-                local invalid_h = meta.detect_current.h < 0
-                local symmetric_x = not invalid_h and meta.detect_current.x == (meta.size_origin.w - meta.detect_current.w) / 2
-                local symmetric_y = not invalid_h and meta.detect_current.y == (meta.size_origin.h - meta.detect_current.h) / 2
-                local in_tolerance_y =
-                    not invalid_h and meta.detect_current.y >= (meta.size_origin.h - meta.detect_current.h - options.height_pixel_tolerance) / 2 and
-                    meta.detect_current.y <= (meta.size_origin.h - meta.detect_current.h + options.height_pixel_tolerance) / 2
+                local not_already_apply = meta.detect_current.h ~= meta.apply_current.h or meta.detect_current.w ~= meta.apply_current.w
+                local symmetric_x = meta.detect_current.x == (meta.size_origin.w - meta.detect_current.w) / 2
+                local symmetric_y = meta.detect_current.y == (meta.size_origin.h - meta.detect_current.h) / 2
+                local in_margin_y =
+                    meta.detect_current.y >= (meta.size_origin.h - meta.detect_current.h - options.height_pxl_margin) / 2 and
+                    meta.detect_current.y <= (meta.size_origin.h - meta.detect_current.h + options.height_pxl_margin) / 2
                 local pxl_change_h =
-                    meta.detect_current.h >= meta.apply_current.h - options.height_pixel_tolerance and
-                    meta.detect_current.h <= meta.apply_current.h + options.height_pixel_tolerance
+                    meta.detect_current.h >= meta.apply_current.h - options.height_pxl_margin and
+                    meta.detect_current.h <= meta.apply_current.h + options.height_pxl_margin
                 local pct_change_h =
-                    meta.detect_current.h >= meta.apply_current.h - meta.apply_current.h * options.height_pct_tolerance and
-                    meta.detect_current.h <= meta.apply_current.h + meta.apply_current.h * height_pct_tolerance_up
+                    meta.detect_current.h >= meta.apply_current.h - meta.apply_current.h * options.height_pct_margin and
+                    meta.detect_current.h <= meta.apply_current.h + meta.apply_current.h * height_pct_margin_up
                 local max_aspect_ratio_h = meta.detect_current.h >= meta.size_origin.w / options.max_aspect_ratio
                 local detect_confirmation = meta.detect_current.h == meta.detect_last.h
                 local detect_size_origin = meta.detect_current.h == meta.size_origin.h
 
-                -- Debug cropdetect meta
-                --[[ local state_current_y
+                local shape_current_y
                 if symmetric_y then
-                    state_current_y = "Symmetric"
-                elseif in_tolerance_y then
-                    state_current_y = "In tolerance"
-                elseif not invalid_h then
-                    state_current_y = "Asymmetric"
+                    shape_current_y = "Symmetric"
+                elseif in_margin_y then
+                    shape_current_y = "In margin"
                 else
-                    state_current_y = "Invalid"
-                end ]]
-                -- mp.msg.debug(string.format("detect_last=w=%s:h=%s:x=%s:y=%s", meta.detect_last.w, meta.detect_last.h, meta.detect_last.x, meta.detect_last.y))
+                    shape_current_y = "Asymmetric"
+                end
+
+                -- Debug cropdetect meta
                 --[[ mp.msg.info(
                     string.format(
                         "detect_curr=w=%s:h=%s:x=%s:y=%s, Y:%s",
@@ -249,38 +303,45 @@ function auto_crop()
                         meta.detect_current.h,
                         meta.detect_current.x,
                         meta.detect_current.y,
-                        state_current_y
+                        shape_current_y
                     )
                 ) ]]
-                -- mp.msg.debug(string.format("apply_curr=w=%s:h=%s:x=%s:y=%s", meta.apply_current.w, meta.apply_current.h, meta.apply_current.x, meta.apply_current.y))
-                -- mp.msg.debug(string.format("size_origin=w=%s:h=%s detect_current:w=%s:h=%s", meta.size_origin.w, meta.size_origin.h, meta.detect_current.w, meta.detect_current.h))
 
-                -- Auto adjust black threshold
-                if not invalid_h then
-                    if in_tolerance_y then
-                        meta_counter(meta.detect_current)
-                        if limit_adjust < limit_max then
-                            if detect_size_origin then
-                                if limit_adjust + limit_adjust_by + 1 <= limit_max then
-                                    limit_adjust = limit_adjust + limit_adjust_by + 1
-                                else
-                                    limit_adjust = limit_max
-                                end
-                            end
-                        end
-                    else
-                        if limit_adjust > 0 then
-                            if limit_adjust - limit_adjust_by >= 0 then
-                                limit_adjust = limit_adjust - limit_adjust_by
+                -- Store valid crop meta
+                local detect_shape_y
+                if in_margin_y and max_aspect_ratio_h then
+                    if meta_stats(meta.detect_current, shape_current_y) then
+                        detect_shape_y = symmetric_y
+                    end
+                else
+                    detect_shape_y = in_margin_y
+                end
+
+                -- Auto adjust black threshold and detect_seconds
+                if in_margin_y then
+                    if limit_adjust < limit_max then
+                        if detect_size_origin then
+                            if limit_adjust + limit_adjust_by + 1 <= limit_max then
+                                limit_adjust = limit_adjust + limit_adjust_by + 1
                             else
-                                limit_adjust = 0
+                                limit_adjust = limit_max
                             end
                         end
+                    end
+                    detect_seconds_adjust = options.detect_seconds
+                else
+                    if limit_adjust > 0 then
+                        if limit_adjust - limit_adjust_by >= 0 then
+                            limit_adjust = limit_adjust - limit_adjust_by
+                        else
+                            limit_adjust = 0
+                        end
+                        detect_seconds_adjust = 0
                     end
                 end
 
                 -- Crop Filter:
-                local crop_filter = not_already_apply and symmetric_x and in_tolerance_y and not pxl_change_h and not pct_change_h and max_aspect_ratio_h and detect_confirmation
+                local crop_filter = not_already_apply and symmetric_x and detect_shape_y and (pxl_change_h or not pct_change_h) and max_aspect_ratio_h and detect_confirmation
 
                 if crop_filter then
                     -- Apply crop.
@@ -294,14 +355,9 @@ function auto_crop()
                             meta.detect_current.y
                         )
                     )
-
                     -- Save values to compare later.
                     meta_copy(meta.detect_current, meta.apply_current)
                 end
-                -- Debug meta_count
-                --[[ for k, v in pairs(meta_count) do
-                    mp.msg.info(string.format("%s %s",k, v))
-                end ]]
                 meta_copy(meta.detect_current, meta.detect_last)
             end
             -- Resume auto_crop
@@ -364,9 +420,10 @@ function on_start()
 end
 
 function seek(name)
+    mp.msg.info(string.format("Stop by %s event.", name))
+    meta_stats(_, _, true)
     if timers.periodic_timer and timers.periodic_timer:is_enabled() then
         timers.periodic_timer:kill()
-        mp.msg.info(string.format("Stop by %s event.", name))
         if timers.crop_detect and timers.crop_detect:is_enabled() then
             timers.crop_detect:kill()
         end
