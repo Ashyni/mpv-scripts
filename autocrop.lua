@@ -136,7 +136,7 @@ function meta_stats(meta, shape, debug)
     meta_count[meta_whxy].count = meta_count[meta_whxy].count + 1
 
     -- Cond1
-    for k, k1 in pairs(meta_count) do
+    --[[ for k, k1 in pairs(meta_count) do
         cond1_y, cond1_n = 0, 0
         for k2, k3 in pairs(meta_count) do
             if meta_count[k] ~= meta_count[k2] then
@@ -155,7 +155,7 @@ function meta_stats(meta, shape, debug)
             cond1_r = false
             meta_count[k].cond1 = "no"
         end
-    end
+    end ]]
 
     return return_shape
 end
