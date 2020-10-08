@@ -72,7 +72,7 @@ local labels = {
     crop = string.format("%s-crop", label_prefix),
     cropdetect = string.format("%s-cropdetect", label_prefix)
 }
-local height_pct_margin_up = (100 * options.height_pct_margin) / (100 - 100 * options.height_pct_margin)
+local height_pct_margin_up = options.height_pct_margin / (1 - options.height_pct_margin)
 local detect_seconds_adjust = options.detect_seconds
 local limit_max = options.detect_limit
 local limit_adjust = options.detect_limit
