@@ -6,6 +6,17 @@ Base on https://github.com/mpv-player/mpv/blob/master/TOOLS/lua/autocrop.lua.
 
 Script to automatically "crop" top/bottom black bar on Ultra Wide Screen (21:9) or any wider screen (phone).
 
+### Usage
+
+Save `autocrop.lua` in `~/.config/.mpv/scripts/` (Linux/macOS) or `%AppData%\mpv\scripts\` (Windows) or `/storage/emulated/0/` (Android). 
+Edit your `mpv.conf` file to add `script=<path to the script>`, eg:
+```
+#Windows mpv-shim:
+script=C:\Users\<username>\AppData\Roaming\jellyfin-mpv-shim\scripts\autocrop.lua
+#Android mpv-android:
+script=/storage/emulated/0/Download/autocrop.lua
+```
+
 ### Features
 
 - Periodic or Manual/Single "crop".
