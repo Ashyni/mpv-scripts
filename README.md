@@ -4,13 +4,12 @@
 
 Base on https://github.com/mpv-player/mpv/blob/master/TOOLS/lua/autocrop.lua.
 
-Script to automatically crop top/bottom black bar on Ultra Wide Screen (21:9) or any wider screen (phone).
+Script to automatically "crop" top/bottom black bar on Ultra Wide Screen (21:9) or any wider screen (phone).
 
 ### Features
 
-- Periodic or Single scan/crop.
-- Prevent crop bigger than option max_aspect_ratio.
-- Prevent asymmetric crop.
+- Periodic or Single "crop".
+- Multiple filters to prevent unwanted "crop".
 - Auto adjust black threshold.
 - Auto pause the script when seeking/loading.
 
@@ -32,8 +31,8 @@ Script to automatically crop top/bottom black bar on Ultra Wide Screen (21:9) or
 
 SHIFT+C do:
 
-If auto=false, crop on demand.
-If auto=true, remove last crop and stay disable until key is press again.
+If auto=false, "crop" on demand.
+If auto=true, remove last "crop" and stay disable until key is press again.
 
 ### Troubleshooting
 
