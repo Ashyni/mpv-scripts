@@ -95,17 +95,17 @@ local function meta_copy(from, to)
 end
 
 local function meta_stats(meta, shape, debug)
-    local sym, in_tol = 0, 0
-    local is_majority, cond1_r, return_shape
     -- Shape Majority
+    local symmetric, in_margin = 0, 0
+    local is_majority, return_shape
     for k, k1 in pairs(meta_stat) do
         if meta_stat[k].shape_y == "Symmetric" then
-            sym = sym + meta_stat[k].count
+            symmetric = symmetric + meta_stat[k].count
         else
-            in_tol = in_tol + meta_stat[k].count
+            in_margin = in_margin + meta_stat[k].count
         end
     end
-    if sym > in_tol then
+    if symmetric > in_margin then
         return_shape = true
         is_majority = "Symmetric"
     else
@@ -116,7 +116,7 @@ local function meta_stats(meta, shape, debug)
     -- Debug
     if debug then
         mp.msg.info("Meta Stats:")
-        mp.msg.info(string.format("Shape majority is %s, %d > %d", is_majority, sym, in_tol))
+        mp.msg.info(string.format("Shape majority is %s, %d > %d", is_majority, symmetric, in_margin))
         for k, k1 in pairs(meta_stat) do
             if type(k) ~= "table" then
                 mp.msg.info(string.format("%s count=%s shape_y=%s", k, meta_stat[k].count, meta_stat[k].shape_y))
@@ -135,7 +135,8 @@ local function meta_stats(meta, shape, debug)
     meta_stat[meta_whxy].count = meta_stat[meta_whxy].count + 1
 
     -- Cond1
-    --[[ for k, k1 in pairs(meta_stat) do
+    --[[ local cond1_r
+        for k, k1 in pairs(meta_stat) do
         cond1_y, cond1_n = 0, 0
         for k2, k3 in pairs(meta_stat) do
             if meta_stat[k] ~= meta_stat[k2] then
@@ -155,7 +156,6 @@ local function meta_stats(meta, shape, debug)
             meta_stat[k].cond1 = "no"
         end
     end ]]
-
     return return_shape
 end
 
@@ -276,8 +276,7 @@ local function auto_crop()
                     meta.detect_current.y >= (meta.size_origin.h - meta.detect_current.h - options.height_pxl_margin) / 2 and
                     meta.detect_current.y <= (meta.size_origin.h - meta.detect_current.h + options.height_pxl_margin) / 2
                 local pxl_change_h =
-                    meta.detect_current.h >= meta.apply_current.h - options.height_pxl_margin and
-                    meta.detect_current.h <= meta.apply_current.h + options.height_pxl_margin
+                    meta.detect_current.h >= meta.apply_current.h - options.height_pxl_margin and meta.detect_current.h <= meta.apply_current.h + options.height_pxl_margin
                 local pct_change_h =
                     meta.detect_current.h >= meta.apply_current.h - meta.apply_current.h * options.height_pct_margin and
                     meta.detect_current.h <= meta.apply_current.h + meta.apply_current.h * height_pct_margin_up
@@ -305,7 +304,6 @@ local function auto_crop()
                         shape_current_y
                     )
                 ) ]]
-
                 -- Store valid crop meta
                 local detect_shape_y
                 if in_margin_y and max_aspect_ratio_h then
