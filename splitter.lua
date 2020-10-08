@@ -8,7 +8,7 @@ local options = {
 }
 read_options(options)
 
-function on_start()
+local function on_start()
 end
 
 mp.register_event("file-loaded", on_start)
