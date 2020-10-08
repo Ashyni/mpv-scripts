@@ -77,17 +77,16 @@ local detect_seconds_adjust = options.detect_seconds
 local limit_max = options.detect_limit
 local limit_adjust = options.detect_limit
 local limit_adjust_by = 1
-local timers = {}
--- states
+-- state
+local timer = {}
 local in_progress, paused, toggled, seeking
 -- metadata
-local meta = {}
+local meta, meta_stat = {}, {}
 local entity = {"size_origin", "apply_current", "detect_current", "detect_last"}
 local unit = {"w", "h", "x", "y"}
 for k, v in pairs(entity) do
     meta[v] = {unit}
 end
-local meta_stat = {}
 
 local function meta_copy(from, to)
     for k, v in pairs(unit) do
@@ -247,7 +246,7 @@ end
 local function auto_crop()
     -- Pause auto_crop
     in_progress = true
-    timers.periodic_timer:stop()
+    timer.periodic_timer:stop()
 
     -- Verify if there is enough time to detect crop.
     local time_needed = detect_seconds_adjust
@@ -260,7 +259,7 @@ local function auto_crop()
     end
 
     -- Wait to gather data.
-    timers.crop_detect =
+    timer.crop_detect =
         mp.add_timeout(
         time_needed,
         function()
@@ -363,7 +362,7 @@ local function auto_crop()
             -- Resume auto_crop
             in_progress = false
             if not paused and not toggled then
-                timers.periodic_timer:resume()
+                timer.periodic_timer:resume()
             end
         end
     )
@@ -372,13 +371,13 @@ end
 local function cleanup()
     mp.msg.info("Cleanup.")
     -- Kill all timers.
-    for index, value in pairs(timers) do
-        if timers[index]:is_enabled() then
-            timers[index]:kill()
+    for index, value in pairs(timer) do
+        if timer[index]:is_enabled() then
+            timer[index]:kill()
         end
     end
     -- Remove all timers.
-    timers = {}
+    timer = {}
 
     -- Remove all existing filters.
     for key, value in pairs(labels) do
@@ -404,14 +403,14 @@ local function on_start()
         return
     end
 
-    timers.start_delay =
+    timer.start_delay =
         mp.add_timeout(
         options.start_delay,
         function()
             -- Run periodic or once.
             if options.auto then
                 local time_needed = options.periodic_timer
-                timers.periodic_timer = mp.add_periodic_timer(time_needed, auto_crop)
+                timer.periodic_timer = mp.add_periodic_timer(time_needed, auto_crop)
             else
                 auto_crop()
             end
@@ -422,10 +421,10 @@ end
 local function seek(name)
     mp.msg.info(string.format("Stop by %s event.", name))
     meta_stats(_, _, true)
-    if timers.periodic_timer and timers.periodic_timer:is_enabled() then
-        timers.periodic_timer:kill()
-        if timers.crop_detect and timers.crop_detect:is_enabled() then
-            timers.crop_detect:kill()
+    if timer.periodic_timer and timer.periodic_timer:is_enabled() then
+        timer.periodic_timer:kill()
+        if timer.crop_detect and timer.crop_detect:is_enabled() then
+            timer.crop_detect:kill()
         end
     end
 end
@@ -435,16 +434,16 @@ local function seek_event()
 end
 
 local function resume(name)
-    if timers.periodic_timer and not timers.periodic_timer:is_enabled() and not in_progress then
-        timers.periodic_timer:resume()
+    if timer.periodic_timer and not timer.periodic_timer:is_enabled() and not in_progress then
+        timer.periodic_timer:resume()
         mp.msg.info(string.format("Resumed by %s event.", name))
     end
 
     local playback_time = mp.get_property_native("playback-time")
-    if timers.start_delay and timers.start_delay:is_enabled() and playback_time > options.start_delay then
-        timers.start_delay.timeout = 0
-        timers.start_delay:kill()
-        timers.start_delay:resume()
+    if timer.start_delay and timer.start_delay:is_enabled() and playback_time > options.start_delay then
+        timer.start_delay.timeout = 0
+        timer.start_delay:kill()
+        timer.start_delay:resume()
     end
 end
 
