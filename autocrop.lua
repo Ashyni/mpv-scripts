@@ -87,23 +87,23 @@ local unit = {"w", "h", "x", "y"}
 for k, v in pairs(entity) do
     meta[v] = {unit}
 end
-local meta_count = {}
+local meta_stat = {}
 
-function meta_copy(from, to)
+local function meta_copy(from, to)
     for k, v in pairs(unit) do
         to[v] = from[v]
     end
 end
 
-function meta_stats(meta, shape, debug)
+local function meta_stats(meta, shape, debug)
     local sym, in_tol = 0, 0
     local is_majority, cond1_r, return_shape
     -- Shape Majority
-    for k, k1 in pairs(meta_count) do
-        if meta_count[k].shape_y == "Symmetric" then
-            sym = sym + meta_count[k].count
+    for k, k1 in pairs(meta_stat) do
+        if meta_stat[k].shape_y == "Symmetric" then
+            sym = sym + meta_stat[k].count
         else
-            in_tol = in_tol + meta_count[k].count
+            in_tol = in_tol + meta_stat[k].count
         end
     end
     if sym > in_tol then
@@ -118,29 +118,29 @@ function meta_stats(meta, shape, debug)
     if debug then
         mp.msg.info("Meta Stats:")
         mp.msg.info(string.format("Shape majority is %s, %d > %d", is_majority, sym, in_tol))
-        for k, k1 in pairs(meta_count) do
+        for k, k1 in pairs(meta_stat) do
             if type(k) ~= "table" then
-                mp.msg.info(string.format("%s count=%s shape_y=%s cond1=%s", k, meta_count[k].count, meta_count[k].shape_y, meta_count[k].cond1))
+                mp.msg.info(string.format("%s count=%s shape_y=%s", k, meta_stat[k].count, meta_stat[k].shape_y))
             end
         end
         return
     end
 
     local meta_whxy = string.format("w=%s:h=%s:x=%s:y=%s", meta.w, meta.h, meta.x, meta.y)
-    if not meta_count[meta_whxy] then
-        meta_count[meta_whxy] = {unit}
-        meta_count[meta_whxy].count = 0
-        meta_count[meta_whxy].shape_y = shape
-        meta_copy(meta, meta_count[meta_whxy])
+    if not meta_stat[meta_whxy] then
+        meta_stat[meta_whxy] = {unit}
+        meta_stat[meta_whxy].count = 0
+        meta_stat[meta_whxy].shape_y = shape
+        meta_copy(meta, meta_stat[meta_whxy])
     end
-    meta_count[meta_whxy].count = meta_count[meta_whxy].count + 1
+    meta_stat[meta_whxy].count = meta_stat[meta_whxy].count + 1
 
     -- Cond1
-    for k, k1 in pairs(meta_count) do
+    --[[ for k, k1 in pairs(meta_stat) do
         cond1_y, cond1_n = 0, 0
-        for k2, k3 in pairs(meta_count) do
-            if meta_count[k] ~= meta_count[k2] then
-                if meta_count[k].shape_y == is_majority and meta_count[k].count / 5 > meta_count[k2].count then
+        for k2, k3 in pairs(meta_stat) do
+            if meta_stat[k] ~= meta_stat[k2] then
+                if meta_stat[k].shape_y == is_majority and meta_stat[k].count / 5 > meta_stat[k2].count then
                     cond1_y = cond1_y + 1
                 else
                     cond1_n = cond1_n + 1
@@ -150,17 +150,17 @@ function meta_stats(meta, shape, debug)
 
         if cond1_y > cond1_n or (cond1_y + cond1_n) == 0 then
             cond1_r = true
-            meta_count[k].cond1 = "yes"
+            meta_stat[k].cond1 = "yes"
         else
             cond1_r = false
-            meta_count[k].cond1 = "no"
+            meta_stat[k].cond1 = "no"
         end
-    end
+    end ]]
 
     return return_shape
 end
 
-function init_size()
+local function init_size()
     local width = mp.get_property_native("width")
     local height = mp.get_property_native("height")
     meta.size_origin = {
@@ -172,7 +172,7 @@ function init_size()
     meta_copy(meta.size_origin, meta.apply_current)
 end
 
-function is_filter_present(label)
+local function is_filter_present(label)
     local filters = mp.get_property_native("vf")
     for index, filter in pairs(filters) do
         if filter["label"] == label then
@@ -182,7 +182,7 @@ function is_filter_present(label)
     return false
 end
 
-function is_enough_time(seconds)
+local function is_enough_time(seconds)
     local time_needed = seconds + 1
     local playtime_remaining = mp.get_property_native("playtime-remaining")
     if playtime_remaining and time_needed > playtime_remaining then
@@ -193,13 +193,13 @@ function is_enough_time(seconds)
     return true
 end
 
-function is_cropable()
+local function is_cropable()
     local vid = mp.get_property_native("vid")
     local is_album = vid and mp.get_property_native(string.format("track-list/%s/albumart", vid)) or false
     return vid and not is_album
 end
 
-function insert_crop_filter()
+local function insert_crop_filter()
     local insert_crop_filter_command =
         mp.command(string.format("no-osd vf pre @%s:lavfi-cropdetect=limit=%d/255:round=%d:reset=0", labels.cropdetect, limit_adjust, options.detect_round))
     if not insert_crop_filter_command then
@@ -210,13 +210,13 @@ function insert_crop_filter()
     return true
 end
 
-function remove_filter(label)
+local function remove_filter(label)
     if is_filter_present(label) then
         mp.command(string.format("no-osd vf remove @%s", label))
     end
 end
 
-function collect_metadata()
+local function collect_metadata()
     local cropdetect_metadata
     repeat
         cropdetect_metadata = mp.get_property_native(string.format("vf-metadata/%s", labels.cropdetect))
@@ -244,7 +244,7 @@ function collect_metadata()
     return false
 end
 
-function auto_crop()
+local function auto_crop()
     -- Pause auto_crop
     in_progress = true
     timers.periodic_timer:stop()
@@ -369,7 +369,7 @@ function auto_crop()
     )
 end
 
-function cleanup()
+local function cleanup()
     mp.msg.info("Cleanup.")
     -- Kill all timers.
     for index, value in pairs(timers) do
@@ -386,12 +386,12 @@ function cleanup()
     end
 
     -- Reset some values
-    meta_count = {}
+    meta_stat = {}
     meta.size_origin = {}
     limit_adjust = options.detect_limit
 end
 
-function on_start()
+local function on_start()
     if not is_cropable() then
         mp.msg.warn("Only works for videos.")
         return
@@ -419,7 +419,7 @@ function on_start()
     )
 end
 
-function seek(name)
+local function seek(name)
     mp.msg.info(string.format("Stop by %s event.", name))
     meta_stats(_, _, true)
     if timers.periodic_timer and timers.periodic_timer:is_enabled() then
@@ -430,11 +430,11 @@ function seek(name)
     end
 end
 
-function seek_event()
+local function seek_event()
     seeking = true
 end
 
-function resume(name)
+local function resume(name)
     if timers.periodic_timer and not timers.periodic_timer:is_enabled() and not in_progress then
         timers.periodic_timer:resume()
         mp.msg.info(string.format("Resumed by %s event.", name))
@@ -448,11 +448,11 @@ function resume(name)
     end
 end
 
-function resume_event()
+local function resume_event()
     seeking = false
 end
 
-function on_toggle()
+local function on_toggle()
     if not options.auto then
         auto_crop()
         mp.osd_message(string.format("%s once.", label_prefix), 3)
@@ -478,7 +478,7 @@ function on_toggle()
     end
 end
 
-function pause(_, bool)
+local function pause(_, bool)
     if options.auto then
         if bool then
             paused = true
