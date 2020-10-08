@@ -8,8 +8,8 @@ Script to automatically "crop" top/bottom black bar on Ultra Wide Screen (21:9) 
 
 ### Features
 
-- Periodic or Single "crop".
-- Multiple filters to prevent unwanted "crop".
+- Periodic or Manual/Single "crop".
+- Multiple filters to prevent unwanted "cropping".
 - Auto adjust black threshold.
 - Auto pause the script when seeking/loading.
 
@@ -17,7 +17,8 @@ Script to automatically "crop" top/bottom black bar on Ultra Wide Screen (21:9) 
 
 - Add width filter, for now it's recommended to keep `fixed_width = true`.
 - Add timer to prevent too much change in a row with the preference of keeping up or down.
-- Documentation
+- Improve manual/single "crop".
+- Documentation.
 
 ### OS
 
