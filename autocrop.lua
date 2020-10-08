@@ -110,7 +110,7 @@ local function meta_stats(meta, shape, debug)
         is_majority = "Symmetric"
     else
         return_shape = false
-        is_majority = "In Tolerance"
+        is_majority = "In Margin"
     end
 
     -- Debug
@@ -288,7 +288,7 @@ local function auto_crop()
                 if symmetric_y then
                     shape_current_y = "Symmetric"
                 elseif in_margin_y then
-                    shape_current_y = "In margin"
+                    shape_current_y = "In Margin"
                 else
                     shape_current_y = "Asymmetric"
                 end
