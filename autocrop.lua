@@ -36,15 +36,16 @@ detect_round: number[2^n] -  The value which the width/height should be divisibl
 detect_seconds: seconds - How long to gather cropdetect data.
     Increasing this may be desirable to allow cropdetect more time to collect data.
 
-min/max_aspect_ratio: [21.6/9] or [2.4][2.68] - min_aspect_ratio is used to disable the script if the video is over that ratio (already crop).
+min/max_aspect_ratio: [21.6/9] or [2.4], [24.12/9] or [2.68] - min_aspect_ratio is used to disable the script if the video is over that ratio (already crop).
     max_aspect_ratio is used to prevent cropping over that ratio.
---]]
+
+mode: [0-4] - 0 disable, 1 on-demand, 2 single, 3 auto-manual, 4 auto-start
+    ]]
 require "mp.msg"
 require "mp.options"
 
 local options = {
-    enable = true,
-    auto = true, -- create mode = 0-on-demand, 1-single, 2-auto-start, 3-auto-manual
+    mode = 4,
     periodic_timer = 0,
     start_delay = 0,
     -- crop behavior
@@ -61,8 +62,8 @@ local options = {
 }
 read_options(options)
 
-if not options.enable then
-    mp.msg.info("Disable script.")
+if options.mode == 0 then
+    mp.msg.info("mode = 0, disable script.")
     return
 end
 
@@ -230,9 +231,17 @@ local function collect_metadata()
 end
 
 local function auto_crop()
-    -- Pause auto_crop
+    -- Pause timer
     in_progress = true
-    timer.periodic_timer:stop()
+    if timer.periodic_timer then
+        timer.periodic_timer:stop()
+    end
+
+    if options.mode % 2 == 1 and toggled == nil then
+        toggled = true
+        in_progress = false
+        return
+    end
 
     -- Verify if there is enough time to detect crop.
     local time_needed = detect_seconds_adjust
@@ -295,6 +304,7 @@ local function auto_crop()
                 -- crop with black bar if over max_aspect_ratio
                 if in_margin_y and not bigger_than_min_h then
                     meta.detect_current.h = min_h
+                    -- we should be able to calculate the offset Y if in_margin_y (wip)
                     meta.detect_current.y = (meta.size_origin.h - meta.detect_current.h) / 2
                     bigger_than_min_h = true
                 end
@@ -347,12 +357,16 @@ local function auto_crop()
                     )
                     -- Save values to compare later.
                     meta_copy(meta.detect_current, meta.apply_current)
+                    if options.mode < 3 then
+                        in_progress = false
+                        return
+                    end
                 end
                 meta_copy(meta.detect_current, meta.detect_last)
             end
             -- Resume auto_crop
             in_progress = false
-            if not paused and not toggled then
+            if timer.periodic_timer and not paused and not toggled then
                 timer.periodic_timer:resume()
             end
         end
@@ -394,17 +408,19 @@ local function on_start()
         return
     end
 
+    local start_delay
+    if options.mode ~= 2 then
+        start_delay = 0
+    else
+        start_delay = options.start_delay
+    end
+
     timer.start_delay =
         mp.add_timeout(
-        options.start_delay,
+        start_delay,
         function()
-            -- Run periodic or once.
-            if options.auto then
-                local time_needed = options.periodic_timer
-                timer.periodic_timer = mp.add_periodic_timer(time_needed, auto_crop)
-            else
-                auto_crop()
-            end
+            local time_needed = options.periodic_timer
+            timer.periodic_timer = mp.add_periodic_timer(time_needed, auto_crop)
         end
     )
 end
@@ -443,33 +459,28 @@ local function resume_event()
 end
 
 local function on_toggle()
-    if not options.auto then
-        auto_crop()
-        mp.osd_message(string.format("%s once.", label_prefix), 3)
+    if is_filter_present(labels.crop) then
+        remove_filter(labels.crop)
+        remove_filter(labels.cropdetect)
+        meta_copy(meta.size_origin, meta.apply_current)
+    end
+    if not toggled then
+        toggled = true
+        if not paused then
+            seek("toggle")
+        end
+        mp.osd_message(string.format("%s paused.", label_prefix), 3)
     else
-        if is_filter_present(labels.crop) then
-            remove_filter(labels.crop)
-            remove_filter(labels.cropdetect)
-            meta_copy(meta.size_origin, meta.apply_current)
+        toggled = false
+        if not paused then
+            resume("toggle")
         end
-        if not toggled then
-            toggled = true
-            if not paused then
-                seek("toggle")
-            end
-            mp.osd_message(string.format("%s paused.", label_prefix), 3)
-        else
-            toggled = false
-            if not paused then
-                resume("toggle")
-            end
-            mp.osd_message(string.format("%s resumed.", label_prefix), 3)
-        end
+        mp.osd_message(string.format("%s resumed.", label_prefix), 3)
     end
 end
 
 local function pause(_, bool)
-    if options.auto then
+    if options.mode > 2 then
         if bool then
             paused = true
             seek("pause")
