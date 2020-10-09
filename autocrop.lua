@@ -36,7 +36,7 @@ detect_round: number[2^n] -  The value which the width/height should be divisibl
 detect_seconds: seconds - How long to gather cropdetect data.
     Increasing this may be desirable to allow cropdetect more time to collect data.
 
-min/max_aspect_ratio: [21.6/9] or [2.4] - min_aspect_ratio is used to disable the script if the video is over that ratio (already crop).
+min/max_aspect_ratio: [21.6/9] or [2.4][2.68] - min_aspect_ratio is used to disable the script if the video is over that ratio (already crop).
     max_aspect_ratio is used to prevent cropping over that ratio.
 --]]
 require "mp.msg"
@@ -44,7 +44,7 @@ require "mp.options"
 
 local options = {
     enable = true,
-    auto = true,
+    auto = true, -- create mode = 0-on-demand, 1-single, 2-auto-start, 3-auto-manual
     periodic_timer = 0,
     start_delay = 0,
     -- crop behavior
@@ -72,6 +72,8 @@ local labels = {
     crop = string.format("%s-crop", label_prefix),
     cropdetect = string.format("%s-cropdetect", label_prefix)
 }
+-- option
+local min_h
 local height_pct_margin_up = options.height_pct_margin / (1 - options.height_pct_margin)
 local detect_seconds_adjust = options.detect_seconds
 local limit_max = options.detect_limit
@@ -134,28 +136,6 @@ local function meta_stats(meta, shape, debug)
     end
     meta_stat[meta_whxy].count = meta_stat[meta_whxy].count + 1
 
-    -- Cond1
-    --[[ local cond1_r
-        for k, k1 in pairs(meta_stat) do
-        cond1_y, cond1_n = 0, 0
-        for k2, k3 in pairs(meta_stat) do
-            if meta_stat[k] ~= meta_stat[k2] then
-                if meta_stat[k].shape_y == is_majority and meta_stat[k].count / 5 > meta_stat[k2].count then
-                    cond1_y = cond1_y + 1
-                else
-                    cond1_n = cond1_n + 1
-                end
-            end
-        end
-
-        if cond1_y > cond1_n or (cond1_y + cond1_n) == 0 then
-            cond1_r = true
-            meta_stat[k].cond1 = "yes"
-        else
-            cond1_r = false
-            meta_stat[k].cond1 = "no"
-        end
-    end ]]
     return return_shape
 end
 
@@ -168,6 +148,12 @@ local function init_size()
         x = 0,
         y = 0
     }
+    min_h = math.floor(meta.size_origin.w / options.max_aspect_ratio)
+    if min_h % 2 == 0 then
+        min_h = min_h
+    else
+        min_h = min_h + 1
+    end
     meta_copy(meta.size_origin, meta.apply_current)
 end
 
@@ -269,30 +255,6 @@ local function auto_crop()
                     meta.detect_current.x = meta.size_origin.x
                 end
 
-                local not_already_apply = meta.detect_current.h ~= meta.apply_current.h or meta.detect_current.w ~= meta.apply_current.w
-                local symmetric_x = meta.detect_current.x == (meta.size_origin.w - meta.detect_current.w) / 2
-                local symmetric_y = meta.detect_current.y == (meta.size_origin.h - meta.detect_current.h) / 2
-                local in_margin_y =
-                    meta.detect_current.y >= (meta.size_origin.h - meta.detect_current.h - options.height_pxl_margin) / 2 and
-                    meta.detect_current.y <= (meta.size_origin.h - meta.detect_current.h + options.height_pxl_margin) / 2
-                local pxl_change_h =
-                    meta.detect_current.h >= meta.apply_current.h - options.height_pxl_margin and meta.detect_current.h <= meta.apply_current.h + options.height_pxl_margin
-                local pct_change_h =
-                    meta.detect_current.h >= meta.apply_current.h - meta.apply_current.h * options.height_pct_margin and
-                    meta.detect_current.h <= meta.apply_current.h + meta.apply_current.h * height_pct_margin_up
-                local max_aspect_ratio_h = meta.detect_current.h >= meta.size_origin.w / options.max_aspect_ratio
-                local detect_confirmation = meta.detect_current.h == meta.detect_last.h
-                local detect_size_origin = meta.detect_current.h == meta.size_origin.h
-
-                local shape_current_y
-                if symmetric_y then
-                    shape_current_y = "Symmetric"
-                elseif in_margin_y then
-                    shape_current_y = "In Margin"
-                else
-                    shape_current_y = "Asymmetric"
-                end
-
                 -- Debug cropdetect meta
                 --[[ mp.msg.info(
                     string.format(
@@ -304,9 +266,24 @@ local function auto_crop()
                         shape_current_y
                     )
                 ) ]]
-                -- Store valid crop meta
+                local symmetric_x = meta.detect_current.x == (meta.size_origin.w - meta.detect_current.w) / 2
+                local symmetric_y = meta.detect_current.y == (meta.size_origin.h - meta.detect_current.h) / 2
+                local in_margin_y =
+                    meta.detect_current.y >= (meta.size_origin.h - meta.detect_current.h - options.height_pxl_margin) / 2 and
+                    meta.detect_current.y <= (meta.size_origin.h - meta.detect_current.h + options.height_pxl_margin) / 2
+
+                local shape_current_y
+                if symmetric_y then
+                    shape_current_y = "Symmetric"
+                elseif in_margin_y then
+                    shape_current_y = "In Margin"
+                else
+                    shape_current_y = "Asymmetric"
+                end
+
                 local detect_shape_y
-                if in_margin_y and max_aspect_ratio_h then
+                if in_margin_y then
+                    -- Store valid cropping meta and find majority shape
                     if meta_stats(meta.detect_current, shape_current_y) then
                         detect_shape_y = symmetric_y
                     end
@@ -314,7 +291,24 @@ local function auto_crop()
                     detect_shape_y = in_margin_y
                 end
 
+                local bigger_than_min_h = meta.detect_current.h >= min_h
+                -- crop with black bar if over max_aspect_ratio
+                if in_margin_y and not bigger_than_min_h then
+                    meta.detect_current.h = min_h
+                    meta.detect_current.y = (meta.size_origin.h - meta.detect_current.h) / 2
+                    bigger_than_min_h = true
+                end
+
+                local not_already_apply = meta.detect_current.h ~= meta.apply_current.h or meta.detect_current.w ~= meta.apply_current.w
+                local pxl_change_h =
+                    meta.detect_current.h >= meta.apply_current.h - options.height_pxl_margin and meta.detect_current.h <= meta.apply_current.h + options.height_pxl_margin
+                local pct_change_h =
+                    meta.detect_current.h >= meta.apply_current.h - meta.apply_current.h * options.height_pct_margin and
+                    meta.detect_current.h <= meta.apply_current.h + meta.apply_current.h * height_pct_margin_up
+                local detect_confirmation = meta.detect_current.h == meta.detect_last.h
+
                 -- Auto adjust black threshold and detect_seconds
+                local detect_size_origin = meta.detect_current.h == meta.size_origin.h
                 if in_margin_y then
                     if limit_adjust < limit_max then
                         if detect_size_origin then
@@ -338,10 +332,9 @@ local function auto_crop()
                 end
 
                 -- Crop Filter:
-                local crop_filter = not_already_apply and symmetric_x and detect_shape_y and (pxl_change_h or not pct_change_h) and max_aspect_ratio_h and detect_confirmation
-
+                local crop_filter = not_already_apply and symmetric_x and detect_shape_y and (pxl_change_h or not pct_change_h) and bigger_than_min_h and detect_confirmation
                 if crop_filter then
-                    -- Apply crop.
+                    -- Apply cropping.
                     mp.command(
                         string.format(
                             "no-osd vf pre @%s:lavfi-crop=w=%s:h=%s:x=%s:y=%s",
