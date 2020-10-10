@@ -27,13 +27,11 @@ script=/storage/emulated/0/Download/autocrop.lua
 ### To-Do
 
 - Add width filter, for now it's recommended to keep `fixed_width = true`.
-- Add timer to prevent too much change in a row with the preference of keeping up or down.
-- Improve manual/single "crop".
 - Documentation.
 
 ### OS
 
- - Windows: OK ([mpv](https://github.com/mpv-player/mpv) or [mpv-shim](https://github.com/iwalton3/jellyfin-mpv-shim))
+ - Windows: OK ([mpv](https://mpv.io/) or [mpv-shim](https://github.com/iwalton3/jellyfin-mpv-shim))
  - Linux:   Not tested
  - Android: OK ([mpv-android](https://github.com/mpv-android/mpv-android/commit/348e9511f51238c00a3aca3c3b2ae4d4b661f7f5))
  - Mac:     Not tested
@@ -43,8 +41,8 @@ script=/storage/emulated/0/Download/autocrop.lua
 
 SHIFT+C do:
 
-If auto=false, "crop" on demand.
-If auto=true, remove last "crop" and stay disable until key is press again.
+If mode = 1-2, single cropping on demand.
+If mode = 3-4, enable / disable continuous cropping.
 
 ### Troubleshooting
 
