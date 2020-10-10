@@ -41,8 +41,8 @@ script=/storage/emulated/0/Download/autocrop.lua
 
 SHIFT+C do:
 
-If mode = 1-2, single cropping on demand, stays active until a valid cropping is apply.
-If mode = 3-4, enable / disable continuous cropping.
+- If mode = 1-2, single cropping on demand, stays active until a valid cropping is apply.
+- If mode = 3-4, enable / disable continuous cropping.
 
 ### Troubleshooting
 
