@@ -39,6 +39,9 @@ max_aspect_ratio: [21.6/9] or [2.4], [24.12/9] or [2.68] - this is used to preve
     any good cropping find over this option, will be with small black bar.
 
 mode: [0-4] - 0 disable, 1 on-demand, 2 single-start, 3 auto-manual, 4 auto-start
+
+prevent_change_mode: [0-2] 0 any, 1 up, 2 down - The prevent_change_timer is trigger after a change,
+    Set prevent_change_timer to 0, to disable this.
 ]]
 require "mp.msg"
 require "mp.options"
@@ -48,6 +51,8 @@ local options = {
     periodic_timer = 0,
     start_delay = 0,
     -- crop behavior
+    prevent_change_timer = 0,
+    prevent_change_mode = 2,
     max_aspect_ratio = 21.6 / 9,
     width_pxl_margin = 4,
     height_pxl_margin = 4,
@@ -344,18 +349,35 @@ local function auto_crop()
                 local crop_filter = not_already_apply and symmetric_x and detect_shape_y and (pxl_change_h or not pct_change_h) and bigger_than_min_h and detect_confirmation
                 if crop_filter then
                     -- Apply cropping.
-                    mp.command(
-                        string.format(
-                            "no-osd vf pre @%s:lavfi-crop=w=%s:h=%s:x=%s:y=%s",
-                            labels.crop,
-                            meta.detect_current.w,
-                            meta.detect_current.h,
-                            meta.detect_current.x,
-                            meta.detect_current.y
+                    if not timer.prevent_change or not timer.prevent_change:is_enabled() then
+                        mp.command(
+                            string.format(
+                                "no-osd vf pre @%s:lavfi-crop=w=%s:h=%s:x=%s:y=%s",
+                                labels.crop,
+                                meta.detect_current.w,
+                                meta.detect_current.h,
+                                meta.detect_current.x,
+                                meta.detect_current.y
+                            )
                         )
-                    )
-                    -- Save values to compare later.
-                    meta_copy(meta.detect_current, meta.apply_current)
+                        -- Prevent upcomming change if a timer is defined
+                        if options.prevent_change_timer > 0 then
+                            if
+                                options.prevent_change_mode == 1 and meta.detect_current.h > meta.apply_current.h or
+                                    options.prevent_change_mode == 2 and meta.detect_current.h < meta.apply_current.h or
+                                    options.prevent_change_mode == 0
+                             then
+                                timer.prevent_change =
+                                    mp.add_timeout(
+                                    options.prevent_change_timer,
+                                    function()
+                                    end
+                                )
+                            end
+                        end
+                        -- Save values to compare later.
+                        meta_copy(meta.detect_current, meta.apply_current)
+                    end
                     if options.mode < 3 then
                         in_progress = false
                         return
