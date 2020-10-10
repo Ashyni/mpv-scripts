@@ -40,7 +40,7 @@ min/max_aspect_ratio: [21.6/9] or [2.4], [24.12/9] or [2.68] - min_aspect_ratio 
     max_aspect_ratio is used to prevent cropping over that ratio.
 
 mode: [0-4] - 0 disable, 1 on-demand, 2 single, 3 auto-manual, 4 auto-start
-    ]]
+]]
 require "mp.msg"
 require "mp.options"
 
@@ -49,7 +49,6 @@ local options = {
     periodic_timer = 0,
     start_delay = 0,
     -- crop behavior
-    min_aspect_ratio = 21.6 / 9,
     max_aspect_ratio = 21.6 / 9,
     width_pxl_margin = 4,
     height_pxl_margin = 4,
@@ -402,11 +401,6 @@ local function on_start()
     end
 
     init_size()
-
-    if options.min_aspect_ratio < meta.size_origin.w / meta.size_origin.h then
-        mp.msg.info("Disable script, Aspect Ratio > min_aspect_ratio.")
-        return
-    end
 
     local start_delay
     if options.mode ~= 2 then
