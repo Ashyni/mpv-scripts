@@ -19,7 +19,7 @@ script=/storage/emulated/0/Download/autocrop.lua
 
 ### Features
 
-- Periodic or Manual/Single "crop".
+- 5 mode available: 0 disable, 1 on-demand, 2 single-start, 3 auto-manual, 4 auto-start.
 - Multiple filters to prevent unwanted "cropping".
 - Auto adjust black threshold.
 - Auto pause the script when seeking/loading.
