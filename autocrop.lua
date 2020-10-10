@@ -20,10 +20,9 @@ The default options can be overridden by adding script-opts-append=autocrop-<par
 
 List of available parameters (For default values, see <options>)：
 
-auto: bool - Whether to automatically apply crop periodicly. 
-    If you want a single crop at start, set it to false or add "script-opts-append=autocrop-auto=no" into mpv.conf.
+periodic_timer: seconds - Delay between full cycle.
 
-periodic_timer: seconds - Delay between crop detect in auto mode.
+start_delay: seconds - Delay use by mode = 2 (single-start), to skip intro.
 
 detect_limit: number[0-255] - Black threshold for cropdetect.
     Smaller values will generally result in less cropping.
@@ -36,10 +35,10 @@ detect_round: number[2^n] -  The value which the width/height should be divisibl
 detect_seconds: seconds - How long to gather cropdetect data.
     Increasing this may be desirable to allow cropdetect more time to collect data.
 
-min/max_aspect_ratio: [21.6/9] or [2.4], [24.12/9] or [2.68] - min_aspect_ratio is used to disable the script if the video is over that ratio (already crop).
-    max_aspect_ratio is used to prevent cropping over that ratio.
+max_aspect_ratio: [21.6/9] or [2.4], [24.12/9] or [2.68] - this is used to prevent cropping over the aspect ratio specified,
+    any good cropping find over this option, will be with small black bar.
 
-mode: [0-4] - 0 disable, 1 on-demand, 2 single, 3 auto-manual, 4 auto-start
+mode: [0-4] - 0 disable, 1 on-demand, 2 single-start, 3 auto-manual, 4 auto-start
 ]]
 require "mp.msg"
 require "mp.options"
