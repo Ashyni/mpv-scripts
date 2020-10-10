@@ -244,6 +244,7 @@ local function auto_crop()
     -- Verify if there is enough time to detect crop.
     local time_needed = detect_seconds_adjust
     if not is_enough_time(time_needed) then
+        in_progress = false
         return
     end
 
@@ -362,7 +363,7 @@ local function auto_crop()
                 end
                 meta_copy(meta.detect_current, meta.detect_last)
             end
-            -- Resume auto_crop
+            -- Resume timer
             in_progress = false
             if timer.periodic_timer and not paused and not toggled then
                 timer.periodic_timer:resume()
