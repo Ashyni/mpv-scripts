@@ -321,8 +321,8 @@ local function auto_crop()
                 if in_margin_y then
                     if limit_adjust < limit_max then
                         if detect_size_origin then
-                            if limit_adjust + limit_adjust_by + 1 <= limit_max then
-                                limit_adjust = limit_adjust + limit_adjust_by + 1
+                            if limit_adjust + limit_adjust_by * 2 <= limit_max then
+                                limit_adjust = limit_adjust + limit_adjust_by * 2
                             else
                                 limit_adjust = limit_max
                             end
