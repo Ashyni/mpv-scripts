@@ -64,6 +64,8 @@ if options.mode == 0 then
     return
 end
 
+-- Local function
+local seek, cleanup
 -- Init variables
 local label_prefix = mp.get_script_name()
 local labels = {
@@ -166,11 +168,11 @@ local function is_filter_present(label)
 end
 
 local function is_enough_time(seconds)
-    local time_needed = seconds + 1
+    local time_needed = seconds + 5
     local playtime_remaining = mp.get_property_native("playtime-remaining")
     if playtime_remaining and time_needed > playtime_remaining then
         mp.msg.warn("Not enough time for autocrop.")
-        --seek("no-time")
+        seek("no-time")
         return false
     end
     return true
@@ -388,7 +390,7 @@ local function auto_crop()
     )
 end
 
-local function cleanup()
+function cleanup()
     mp.msg.info("Cleanup.")
     -- Kill all timers.
     for index, value in pairs(timer) do
@@ -410,32 +412,7 @@ local function cleanup()
     limit_adjust = options.detect_limit
 end
 
-local function on_start()
-    if not is_cropable() then
-        mp.msg.warn("Only works for videos.")
-        return
-    end
-
-    init_size()
-
-    local start_delay
-    if options.mode ~= 2 then
-        start_delay = 0
-    else
-        start_delay = options.start_delay
-    end
-
-    timer.start_delay =
-        mp.add_timeout(
-        start_delay,
-        function()
-            local time_needed = options.periodic_timer
-            timer.periodic_timer = mp.add_periodic_timer(time_needed, auto_crop)
-        end
-    )
-end
-
-local function seek(name)
+function seek(name)
     mp.msg.info(string.format("Stop by %s event.", name))
     meta_stats(_, _, true)
     if timer.periodic_timer and timer.periodic_timer:is_enabled() then
@@ -501,6 +478,31 @@ local function pause(_, bool)
             end
         end
     end
+end
+
+local function on_start()
+    if not is_cropable() then
+        mp.msg.warn("Only works for videos.")
+        return
+    end
+
+    init_size()
+
+    local start_delay
+    if options.mode ~= 2 then
+        start_delay = 0
+    else
+        start_delay = options.start_delay
+    end
+
+    timer.start_delay =
+        mp.add_timeout(
+        start_delay,
+        function()
+            local time_needed = options.periodic_timer
+            timer.periodic_timer = mp.add_periodic_timer(time_needed, auto_crop)
+        end
+    )
 end
 
 mp.register_event("seek", seek_event)
