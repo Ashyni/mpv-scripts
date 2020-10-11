@@ -64,7 +64,7 @@ if options.mode == 0 then
     return
 end
 
--- Local function
+-- Forward declarations
 local cleanup
 -- Init variables
 local label_prefix = mp.get_script_name()
