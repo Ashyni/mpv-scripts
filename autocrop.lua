@@ -65,7 +65,7 @@ if options.mode == 0 then
 end
 
 -- Local function
-local seek, cleanup
+local cleanup
 -- Init variables
 local label_prefix = mp.get_script_name()
 local labels = {
@@ -81,7 +81,7 @@ local limit_adjust = options.detect_limit
 local limit_adjust_by = 1
 -- state
 local timer = {}
-local in_progress, paused, toggled, seeking
+local in_progress, paused, toggled, seeking, filter_missing
 -- metadata
 local meta, meta_stat = {}, {}
 local entity = {"size_origin", "apply_current", "detect_current", "detect_last"}
@@ -172,7 +172,6 @@ local function is_enough_time(seconds)
     local playtime_remaining = mp.get_property_native("playtime-remaining")
     if playtime_remaining and time_needed > playtime_remaining then
         mp.msg.warn("Not enough time for autocrop.")
-        seek("no-time")
         return false
     end
     return true
@@ -189,6 +188,7 @@ local function insert_crop_filter()
         mp.command(string.format("no-osd vf pre @%s:lavfi-cropdetect=limit=%d/255:round=%d:reset=0", labels.cropdetect, limit_adjust, options.detect_round))
     if not insert_crop_filter_command then
         mp.msg.error("Does vf=help as #1 line in mvp.conf return libavfilter list with crop/cropdetect in log?")
+        filter_missing = true
         cleanup()
         return false
     end
@@ -412,7 +412,7 @@ function cleanup()
     limit_adjust = options.detect_limit
 end
 
-function seek(name)
+local function seek(name)
     mp.msg.info(string.format("Stop by %s event.", name))
     meta_stats(_, _, true)
     if timer.periodic_timer and timer.periodic_timer:is_enabled() then
@@ -446,6 +446,10 @@ local function resume_event()
 end
 
 local function on_toggle()
+    if filter_missing then
+        mp.osd_message("Libavfilter cropdetect missing", 3)
+        return
+    end
     if is_filter_present(labels.crop) then
         remove_filter(labels.crop)
         remove_filter(labels.cropdetect)
