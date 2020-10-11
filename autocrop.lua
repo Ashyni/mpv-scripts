@@ -1,28 +1,27 @@
 --[[
 This script uses the lavfi cropdetect filter to automatically insert a crop filter with appropriate parameters for the
-currently playing video, the script run continuously by default, base on periodic_timer and detect_seconds timer.
-
+currently playing video, the script run continuously by default, base on the mode choosed.
 It will automatically crop the video, when playback starts.
 
 Also It registers the key-binding "C" (shift+c). You can manually crop the video by pressing the "C" (shift+c) key.
-
 If the "C" key is pressed again, the crop filter is removed restoring playback to its original state.
 
-The workflow is as follows: First, it inserts the filter vf=lavfi=cropdetect. After <detect_seconds> (default is 1)
-seconds, it then inserts the filter vf=crop=w:h:x:y, where w,h,x,y are determined from the vf-metadata gathered by
-cropdetect. The cropdetect filter is removed immediately after the crop filter is inserted as it is no longer needed.
-
-Since the crop parameters are determined from the 1 second of video between inserting the cropdetect and crop filters, the "C"
-key should be pressed at a position in the video where the crop region is unambiguous (i.e., not a black frame, black background
-title card, or dark scene).
+The workflow is as follows: First, it inserts the filter vf=lavfi=cropdetect. After <detect_seconds> (default is < 1)
+seconds, then w,h,x,y are gathered from the vf-metadata left by cropdetect. 
+The cropdetect filter is removed immediately after and finally it inserts the filter vf=lavfi=crop=w:h:x:y.
 
 The default options can be overridden by adding script-opts-append=autocrop-<parameter>=<value> into mpv.conf
 
 List of available parameters (For default values, see <options>)：
 
+mode: [0-4] - 0 disable, 1 on-demand, 2 single-start, 3 auto-manual, 4 auto-start
+
 periodic_timer: seconds - Delay between full cycle.
 
 start_delay: seconds - Delay use by mode = 2 (single-start), to skip intro.
+
+prevent_change_mode: [0-2] 0 any, 1 up, 2 down - The prevent_change_timer is trigger after a change,
+    set prevent_change_timer to 0, to disable this.
 
 detect_limit: number[0-255] - Black threshold for cropdetect.
     Smaller values will generally result in less cropping.
@@ -37,11 +36,6 @@ detect_seconds: seconds - How long to gather cropdetect data.
 
 max_aspect_ratio: [21.6/9] or [2.4], [24.12/9] or [2.68] - this is used to prevent cropping over the aspect ratio specified,
     any good cropping find over this option, will be with small black bar.
-
-mode: [0-4] - 0 disable, 1 on-demand, 2 single-start, 3 auto-manual, 4 auto-start
-
-prevent_change_mode: [0-2] 0 any, 1 up, 2 down - The prevent_change_timer is trigger after a change,
-    Set prevent_change_timer to 0, to disable this.
 ]]
 require "mp.msg"
 require "mp.options"
@@ -176,7 +170,7 @@ local function is_enough_time(seconds)
     local playtime_remaining = mp.get_property_native("playtime-remaining")
     if playtime_remaining and time_needed > playtime_remaining then
         mp.msg.warn("Not enough time for autocrop.")
-        seek("no-time")
+        --seek("no-time")
         return false
     end
     return true
