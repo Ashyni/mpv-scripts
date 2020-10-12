@@ -97,6 +97,17 @@ local function meta_copy(from, to)
 end
 
 local function meta_stats(meta_curr, offset_y, debug)
+    -- Store stats
+    if not debug then
+        local meta_whxy = string.format("w=%s:h=%s:x=%s:y=%s", meta_curr.w, meta_curr.h, meta_curr.x, meta_curr.y)
+        if not meta_stat[meta_whxy] then
+            meta_stat[meta_whxy] = {unit}
+            meta_stat[meta_whxy].count = 0
+            meta_stat[meta_whxy].offset_y = offset_y
+            meta_copy(meta_curr, meta_stat[meta_whxy])
+        end
+        meta_stat[meta_whxy].count = meta_stat[meta_whxy].count + 1
+    end
     -- Offset Majority
     local offset_y_count = {}
     local majority_offset_y
@@ -125,16 +136,6 @@ local function meta_stats(meta_curr, offset_y, debug)
         end
         return
     end
-    -- Store stats
-    local meta_whxy = string.format("w=%s:h=%s:x=%s:y=%s", meta_curr.w, meta_curr.h, meta_curr.x, meta_curr.y)
-    if not meta_stat[meta_whxy] then
-        meta_stat[meta_whxy] = {unit}
-        meta_stat[meta_whxy].count = 0
-        meta_stat[meta_whxy].offset_y = offset_y
-        meta_copy(meta_curr, meta_stat[meta_whxy])
-    end
-    meta_stat[meta_whxy].count = meta_stat[meta_whxy].count + 1
-
     return tonumber(majority_offset_y)
 end
 
@@ -148,9 +149,7 @@ local function init_size()
         y = 0
     }
     min_h = math.floor(meta.size_origin.w / options.max_aspect_ratio)
-    if min_h % 2 == 0 then
-        min_h = min_h
-    else
+    if min_h % 2 ~= 0 then
         min_h = min_h + 1
     end
     meta_copy(meta.size_origin, meta.apply_current)
@@ -268,22 +267,22 @@ local function auto_crop()
                 local in_margin_y =
                     meta.detect_current.y >= (meta.size_origin.h - meta.detect_current.h - options.height_pxl_margin) / 2 and
                     meta.detect_current.y <= (meta.size_origin.h - meta.detect_current.h + options.height_pxl_margin) / 2
+                local bigger_than_min_h = meta.detect_current.h >= min_h
 
                 local majority_offset_y, current_offset_y, return_offset_y
-                if in_margin_y then
+                if in_margin_y and bigger_than_min_h then
                     current_offset_y = (meta.size_origin.h - meta.detect_current.h) / 2 - meta.detect_current.y
                     -- Store valid cropping meta and return offset majority
                     return_offset_y = meta_stats(meta.detect_current, current_offset_y)
                     majority_offset_y = current_offset_y == return_offset_y
                 end
 
-                local bigger_than_min_h = meta.detect_current.h >= min_h
                 -- crop with black bar if over max_aspect_ratio
-                if in_margin_y and not bigger_than_min_h then
+                --[[ if in_margin_y and not bigger_than_min_h then
                     meta.detect_current.h = min_h
                     meta.detect_current.y = (meta.size_origin.h - meta.detect_current.h) / 2 + return_offset_y
                     bigger_than_min_h = true
-                end
+                end ]]
 
                 local not_already_apply = meta.detect_current.h ~= meta.apply_current.h or meta.detect_current.w ~= meta.apply_current.w
                 local pxl_change_h =
