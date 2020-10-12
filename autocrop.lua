@@ -96,47 +96,46 @@ local function meta_copy(from, to)
     end
 end
 
-local function meta_stats(meta, shape, debug)
-    -- Shape Majority
-    local symmetric, in_margin = 0, 0
-    local is_majority, return_shape
+local function meta_stats(meta_curr, offset_y, debug)
+    -- Offset Majority
+    local offset_y_count = {}
+    local majority_offset_y
     for k, k1 in pairs(meta_stat) do
-        if meta_stat[k].shape_y == "Symmetric" then
-            symmetric = symmetric + meta_stat[k].count
-        else
-            in_margin = in_margin + meta_stat[k].count
+        local name_offset = string.format("%d", meta_stat[k].offset_y)
+        if not offset_y_count[name_offset] then
+            offset_y_count[name_offset] = 0
+        end
+        offset_y_count[name_offset] = offset_y_count[name_offset] + meta_stat[k].count
+    end
+    local majority_offset_y_count = 0
+    for k, k1 in pairs(offset_y_count) do
+        if offset_y_count[k] > majority_offset_y_count then
+            majority_offset_y = k
+            majority_offset_y_count = offset_y_count[k]
         end
     end
-    if symmetric > in_margin then
-        return_shape = true
-        is_majority = "Symmetric"
-    else
-        return_shape = false
-        is_majority = "In Margin"
-    end
-
     -- Debug
     if debug then
         mp.msg.info("Meta Stats:")
-        mp.msg.info(string.format("Shape majority is %s, %d > %d", is_majority, symmetric, in_margin))
+        mp.msg.info(string.format("Offset majority is %d", majority_offset_y))
         for k, k1 in pairs(meta_stat) do
             if type(k) ~= "table" then
-                mp.msg.info(string.format("%s count=%s shape_y=%s", k, meta_stat[k].count, meta_stat[k].shape_y))
+                mp.msg.info(string.format("%s offset_y=%s count=%s", k, meta_stat[k].offset_y, meta_stat[k].count))
             end
         end
         return
     end
-
-    local meta_whxy = string.format("w=%s:h=%s:x=%s:y=%s", meta.w, meta.h, meta.x, meta.y)
+    -- Store stats
+    local meta_whxy = string.format("w=%s:h=%s:x=%s:y=%s", meta_curr.w, meta_curr.h, meta_curr.x, meta_curr.y)
     if not meta_stat[meta_whxy] then
         meta_stat[meta_whxy] = {unit}
         meta_stat[meta_whxy].count = 0
-        meta_stat[meta_whxy].shape_y = shape
-        meta_copy(meta, meta_stat[meta_whxy])
+        meta_stat[meta_whxy].offset_y = offset_y
+        meta_copy(meta_curr, meta_stat[meta_whxy])
     end
     meta_stat[meta_whxy].count = meta_stat[meta_whxy].count + 1
 
-    return return_shape
+    return tonumber(majority_offset_y)
 end
 
 local function init_size()
@@ -264,48 +263,25 @@ local function auto_crop()
                     meta.detect_current.x = meta.size_origin.x
                 end
 
-                -- Debug cropdetect meta
-                --[[ mp.msg.info(
-                    string.format(
-                        "detect_curr=w=%s:h=%s:x=%s:y=%s, Y:%s",
-                        meta.detect_current.w,
-                        meta.detect_current.h,
-                        meta.detect_current.x,
-                        meta.detect_current.y,
-                        shape_current_y
-                    )
-                ) ]]
                 local symmetric_x = meta.detect_current.x == (meta.size_origin.w - meta.detect_current.w) / 2
                 local symmetric_y = meta.detect_current.y == (meta.size_origin.h - meta.detect_current.h) / 2
                 local in_margin_y =
                     meta.detect_current.y >= (meta.size_origin.h - meta.detect_current.h - options.height_pxl_margin) / 2 and
                     meta.detect_current.y <= (meta.size_origin.h - meta.detect_current.h + options.height_pxl_margin) / 2
 
-                local shape_current_y
-                if symmetric_y then
-                    shape_current_y = "Symmetric"
-                elseif in_margin_y then
-                    shape_current_y = "In Margin"
-                else
-                    shape_current_y = "Asymmetric"
-                end
-
-                local detect_shape_y
+                local majority_offset_y, current_offset_y, return_offset_y
                 if in_margin_y then
-                    -- Store valid cropping meta and find majority shape
-                    if meta_stats(meta.detect_current, shape_current_y) then
-                        detect_shape_y = symmetric_y
-                    end
-                else
-                    detect_shape_y = in_margin_y
+                    current_offset_y = (meta.size_origin.h - meta.detect_current.h) / 2 - meta.detect_current.y
+                    -- Store valid cropping meta and return offset majority
+                    return_offset_y = meta_stats(meta.detect_current, current_offset_y)
+                    majority_offset_y = current_offset_y == return_offset_y
                 end
 
                 local bigger_than_min_h = meta.detect_current.h >= min_h
                 -- crop with black bar if over max_aspect_ratio
                 if in_margin_y and not bigger_than_min_h then
                     meta.detect_current.h = min_h
-                    -- we should be able to calculate the offset Y if in_margin_y (wip)
-                    meta.detect_current.y = (meta.size_origin.h - meta.detect_current.h) / 2
+                    meta.detect_current.y = (meta.size_origin.h - meta.detect_current.h) / 2 + return_offset_y
                     bigger_than_min_h = true
                 end
 
@@ -342,7 +318,7 @@ local function auto_crop()
                 end
 
                 -- Crop Filter:
-                local crop_filter = not_already_apply and symmetric_x and detect_shape_y and (pxl_change_h or not pct_change_h) and bigger_than_min_h and detect_confirmation
+                local crop_filter = not_already_apply and symmetric_x and majority_offset_y and (pxl_change_h or not pct_change_h) and bigger_than_min_h and detect_confirmation
                 if crop_filter then
                     -- Apply cropping.
                     if not timer.prevent_change or not timer.prevent_change:is_enabled() then
@@ -400,12 +376,10 @@ function cleanup()
     end
     -- Remove all timers.
     timer = {}
-
     -- Remove all existing filters.
     for key, value in pairs(labels) do
         remove_filter(value)
     end
-
     -- Reset some values
     meta_stat = {}
     meta.size_origin = {}
@@ -432,7 +406,6 @@ local function resume(name)
         timer.periodic_timer:resume()
         mp.msg.info(string.format("Resumed by %s event.", name))
     end
-
     local playback_time = mp.get_property_native("playback-time")
     if timer.start_delay and timer.start_delay:is_enabled() and playback_time > options.start_delay then
         timer.start_delay.timeout = 0
