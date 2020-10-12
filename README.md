@@ -4,7 +4,7 @@
 
 Base on https://github.com/mpv-player/mpv/blob/master/TOOLS/lua/autocrop.lua.
 
-Script to automatically "crop" top/bottom black bar on Ultra Wide Screen (21:9) or any wider screen (phone).
+Script to automatically "crop" in real time top/bottom black bar on Ultra Wide Screen (21:9) or any wider screen (phone).
 
 ### Usage
 
