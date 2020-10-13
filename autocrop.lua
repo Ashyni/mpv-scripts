@@ -126,7 +126,7 @@ local function meta_stats(meta_curr, offset_y, debug)
         end
     end
     -- Debug
-    if debug then
+    if debug and majority_offset_y then
         mp.msg.info("Meta Stats:")
         mp.msg.info(string.format("Offset majority is %d", majority_offset_y))
         for k, k1 in pairs(meta_stat) do
