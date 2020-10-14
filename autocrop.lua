@@ -75,10 +75,10 @@ local labels = {
 -- option
 local min_h
 local height_pct_margin_up = options.height_pct_margin / (1 - options.height_pct_margin)
-local detect_seconds_adjust = options.detect_seconds
-local limit_max = options.detect_limit
-local limit_adjust = options.detect_limit
-local limit_adjust_by = 1
+local detect_seconds = options.detect_seconds
+local limit_current = options.detect_limit
+local limit_last = options.detect_limit
+local limit_step = 2
 -- state
 local timer = {}
 local in_progress, paused, toggled, seeking, filter_missing
@@ -183,7 +183,7 @@ end
 
 local function insert_crop_filter()
     local insert_crop_filter_command =
-        mp.command(string.format("no-osd vf pre @%s:lavfi-cropdetect=limit=%d/255:round=%d:reset=0", labels.cropdetect, limit_adjust, options.detect_round))
+        mp.command(string.format("no-osd vf pre @%s:lavfi-cropdetect=limit=%.3f/255:round=%d:reset=0", labels.cropdetect, limit_current, options.detect_round))
     if not insert_crop_filter_command then
         mp.msg.error("Does vf=help as #1 line in mvp.conf return libavfilter list with crop/cropdetect in log?")
         filter_missing = true
@@ -217,11 +217,6 @@ local function collect_metadata()
             x = tonumber(cropdetect_metadata["lavfi.cropdetect.x"]),
             y = tonumber(cropdetect_metadata["lavfi.cropdetect.y"])
         }
-        if meta.detect_current.w < 0 or meta.detect_current.h < 0 then
-            -- Invalid data, probably a black screen
-            detect_seconds_adjust = options.detect_seconds
-            return false
-        end
         return true
     end
     return false
@@ -241,7 +236,7 @@ local function auto_crop()
     end
 
     -- Verify if there is enough time to detect crop.
-    local time_needed = detect_seconds_adjust
+    local time_needed = detect_seconds
     if not is_enough_time(time_needed) then
         in_progress = false
         return
@@ -257,6 +252,7 @@ local function auto_crop()
         time_needed,
         function()
             if collect_metadata() and not paused and not toggled then
+                local invalid = meta.detect_current.h < 0 --[[ or meta.detect_current.w < 0 ]]
                 if options.fixed_width then
                     meta.detect_current.w = meta.size_origin.w
                     meta.detect_current.x = meta.size_origin.x
@@ -269,9 +265,9 @@ local function auto_crop()
                     meta.detect_current.y <= (meta.size_origin.h - meta.detect_current.h + options.height_pxl_margin) / 2
                 local bigger_than_min_h = meta.detect_current.h >= min_h
 
-                local majority_offset_y, current_offset_y, return_offset_y
+                local majority_offset_y, return_offset_y
+                local current_offset_y = (meta.size_origin.h - meta.detect_current.h) / 2 - meta.detect_current.y
                 if in_margin_y and bigger_than_min_h then
-                    current_offset_y = (meta.size_origin.h - meta.detect_current.h) / 2 - meta.detect_current.y
                     -- Store valid cropping meta and return offset majority
                     return_offset_y = meta_stats(meta.detect_current, current_offset_y)
                     majority_offset_y = current_offset_y == return_offset_y
@@ -294,30 +290,55 @@ local function auto_crop()
 
                 -- Auto adjust black threshold and detect_seconds
                 local detect_size_origin = meta.detect_current.h == meta.size_origin.h
-                if in_margin_y then
-                    if limit_adjust < limit_max then
+                local bottom_limit_reach = detect_size_origin and limit_current < limit_last
+                limit_last = limit_current
+                if in_margin_y and not invalid then
+                    if limit_current < options.detect_limit then
                         if detect_size_origin then
-                            if limit_adjust + limit_adjust_by * 2 <= limit_max then
-                                limit_adjust = limit_adjust + limit_adjust_by * 2
+                            if limit_current + limit_step * 2 <= options.detect_limit then
+                                limit_current = limit_current + limit_step * 2
+                                if limit_step >= .25 then
+                                    limit_step = limit_step / 2
+                                end
                             else
-                                limit_adjust = limit_max
+                                limit_current = options.detect_limit
                             end
                         end
                     end
-                    detect_seconds_adjust = options.detect_seconds
+                    if not bottom_limit_reach then
+                        limit_step = 2
+                        limit_current = math.ceil(limit_current)
+                    end
+                    detect_seconds = options.detect_seconds
                 else
-                    if limit_adjust > 0 then
-                        if limit_adjust - limit_adjust_by >= 0 then
-                            limit_adjust = limit_adjust - limit_adjust_by
+                    if limit_current > 0 then
+                        if limit_current - limit_step >= 0 then
+                            limit_current = limit_current - limit_step
                         else
-                            limit_adjust = 0
+                            limit_current = 0
                         end
-                        detect_seconds_adjust = 0
+                        detect_seconds = 0
                     end
                 end
 
+                -- Debug cropdetect meta
+                --[[ mp.msg.info(
+                    string.format(
+                        "detect_curr=w=%s:h=%s:x=%s:y=%s offsetY:%s limit:%s limit_step:%s",
+                        meta.detect_current.w,
+                        meta.detect_current.h,
+                        meta.detect_current.x,
+                        meta.detect_current.y,
+                        current_offset_y,
+                        limit_current,
+                        limit_step
+                    )
+                ) ]]
+
                 -- Crop Filter:
-                local crop_filter = not_already_apply and symmetric_x and majority_offset_y and (pxl_change_h or not pct_change_h) and bigger_than_min_h and detect_confirmation
+                local crop_filter =
+                    not_already_apply and symmetric_x and majority_offset_y and (pxl_change_h or not pct_change_h) and bigger_than_min_h and
+                    (not bottom_limit_reach or detect_confirmation)
                 if crop_filter then
                     -- Apply cropping.
                     if not timer.prevent_change or not timer.prevent_change:is_enabled() then
@@ -382,7 +403,7 @@ function cleanup()
     -- Reset some values
     meta_stat = {}
     meta.size_origin = {}
-    limit_adjust = options.detect_limit
+    limit_current = options.detect_limit
 end
 
 local function seek(name)
@@ -457,11 +478,13 @@ local function pause(_, bool)
 end
 
 local function on_start()
+    mp.msg.info("Start.")
     if not is_cropable() then
-        mp.msg.warn("Only works for videos.")
+        mp.msg.warn("Exit, only works for videos.")
         return
     end
 
+    cleanup()
     init_size()
 
     local start_delay
