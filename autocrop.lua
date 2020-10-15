@@ -97,6 +97,7 @@ local function meta_copy(from, to)
 end
 
 local function meta_stats(meta_curr, offset_y, debug)
+    -- To-do match close metadata together and apply the most finded one
     -- Store stats
     if not debug then
         local meta_whxy = string.format("w=%s:h=%s:x=%s:y=%s", meta_curr.w, meta_curr.h, meta_curr.x, meta_curr.y)
@@ -200,16 +201,10 @@ local function remove_filter(label)
 end
 
 local function collect_metadata()
-    local cropdetect_metadata
-    repeat
-        cropdetect_metadata = mp.get_property_native(string.format("vf-metadata/%s", labels.cropdetect))
-        if paused or toggled or seeking then
-            break
-        end
-    until cropdetect_metadata and cropdetect_metadata["lavfi.cropdetect.w"]
-    -- Remove filter to reset detection.
-    remove_filter(labels.cropdetect)
+    local cropdetect_metadata = mp.get_property_native(string.format("vf-metadata/%s", labels.cropdetect))
     if cropdetect_metadata and cropdetect_metadata["lavfi.cropdetect.w"] then
+        -- Remove filter to reset detection.
+        remove_filter(labels.cropdetect)
         -- Make metadata usable.
         meta.detect_current = {
             w = tonumber(cropdetect_metadata["lavfi.cropdetect.w"]),
@@ -218,6 +213,9 @@ local function collect_metadata()
             y = tonumber(cropdetect_metadata["lavfi.cropdetect.y"])
         }
         return true
+    end
+    if paused or toggled or seeking then
+        remove_filter(labels.cropdetect)
     end
     return false
 end
@@ -251,7 +249,7 @@ local function auto_crop()
         mp.add_timeout(
         time_needed,
         function()
-            if collect_metadata() and not paused and not toggled then
+            if collect_metadata() and not (paused or toggled or seeking) then
                 local invalid = meta.detect_current.h < 0 --[[ or meta.detect_current.w < 0 ]]
                 if options.fixed_width then
                     meta.detect_current.w = meta.size_origin.w
@@ -279,7 +277,6 @@ local function auto_crop()
                     meta.detect_current.y = (meta.size_origin.h - meta.detect_current.h) / 2 + return_offset_y
                     bigger_than_min_h = true
                 end ]]
-
                 local not_already_apply = meta.detect_current.h ~= meta.apply_current.h or meta.detect_current.w ~= meta.apply_current.w
                 local pxl_change_h =
                     meta.detect_current.h >= meta.apply_current.h - options.height_pxl_margin and meta.detect_current.h <= meta.apply_current.h + options.height_pxl_margin
@@ -317,7 +314,7 @@ local function auto_crop()
                         else
                             limit_current = 0
                         end
-                        detect_seconds = 0
+                        detect_seconds = 0.05
                     end
                 end
 
@@ -334,7 +331,6 @@ local function auto_crop()
                         limit_step
                     )
                 ) ]]
-
                 -- Crop Filter:
                 local crop_filter =
                     not_already_apply and symmetric_x and majority_offset_y and (pxl_change_h or not pct_change_h) and bigger_than_min_h and

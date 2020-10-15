@@ -33,7 +33,7 @@ script=/storage/emulated/0/Download/autocrop.lua
 
  - Windows: OK ([mpv](https://mpv.io/) or [mpv-shim](https://github.com/iwalton3/jellyfin-mpv-shim))
  - Linux:   Not tested
- - Android: OK ([mpv-android](https://github.com/mpv-android/mpv-android/commit/348e9511f51238c00a3aca3c3b2ae4d4b661f7f5))
+ - Android: OK ([mpv-android](https://github.com/mpv-android/mpv-android)
  - Mac:     Not tested
  - iOS:     Not tested
 
