@@ -216,6 +216,8 @@ local function collect_metadata()
     end
     if paused or toggled or seeking then
         remove_filter(labels.cropdetect)
+    else
+        detect_seconds = 0.05
     end
     return false
 end
