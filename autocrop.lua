@@ -99,6 +99,7 @@ end
 local function meta_stats(meta_curr, offset_y, debug)
     -- To-do match close metadata together and apply the most finded one
     -- Store stats
+    local closest_meta_count
     if not debug then
         local meta_whxy = string.format("w=%s:h=%s:x=%s:y=%s", meta_curr.w, meta_curr.h, meta_curr.x, meta_curr.y)
         if not meta_stat[meta_whxy] then
@@ -108,36 +109,54 @@ local function meta_stats(meta_curr, offset_y, debug)
             meta_copy(meta_curr, meta_stat[meta_whxy])
         end
         meta_stat[meta_whxy].count = meta_stat[meta_whxy].count + 1
+        closest_meta_count = meta_stat[meta_whxy].count
     end
-    -- Offset Majority
+
     local offset_y_count = {}
-    local majority_offset_y
-    for k, k1 in pairs(meta_stat) do
+    local majority_offset_y, closest_meta, closest_offset_y
+    for k in pairs(meta_stat) do
+        if not debug then
+            -- Closest metadata
+            local meta_in_margin_h =
+                meta_curr.h >= meta_stat[k].h - options.height_pxl_margin and meta_curr.h <= meta_stat[k].h + options.height_pxl_margin and meta_stat[k].count > closest_meta_count
+            if meta_in_margin_h then
+                closest_meta_count = meta_stat[k].count
+                closest_meta = meta_stat[k]
+                closest_offset_y = meta_stat[k].offset_y
+            end
+        end
+        -- Offset Majority
         local name_offset = string.format("%d", meta_stat[k].offset_y)
         if not offset_y_count[name_offset] then
             offset_y_count[name_offset] = 0
         end
         offset_y_count[name_offset] = offset_y_count[name_offset] + meta_stat[k].count
     end
-    local majority_offset_y_count = 0
-    for k, k1 in pairs(offset_y_count) do
-        if offset_y_count[k] > majority_offset_y_count then
-            majority_offset_y = k
-            majority_offset_y_count = offset_y_count[k]
+    -- Maybe add an option to disable correction
+    if not debug and closet_meta and closest_meta.h ~= meta.apply_current.h and closest_meta.h ~= meta.detect_current.h then
+        meta_copy(closest_meta, meta.detect_current)
+    end
+    if not closest_offset_y then
+        local majority_offset_y_count = 0
+        for k in pairs(offset_y_count) do
+            if offset_y_count[k] > majority_offset_y_count then
+                majority_offset_y = k
+                majority_offset_y_count = offset_y_count[k]
+            end
         end
     end
     -- Debug
-    if debug and majority_offset_y then
+    if debug and meta_stat and majority_offset_y then
         mp.msg.info("Meta Stats:")
         mp.msg.info(string.format("Offset majority is %d", majority_offset_y))
-        for k, k1 in pairs(meta_stat) do
+        for k in pairs(meta_stat) do
             if type(k) ~= "table" then
                 mp.msg.info(string.format("%s offset_y=%s count=%s", k, meta_stat[k].offset_y, meta_stat[k].count))
             end
         end
         return
     end
-    return tonumber(majority_offset_y)
+    return tonumber(closest_offset_y) or tonumber(majority_offset_y)
 end
 
 local function init_size()
@@ -252,7 +271,7 @@ local function auto_crop()
         time_needed,
         function()
             if collect_metadata() and not (paused or toggled or seeking) then
-                local invalid = meta.detect_current.h < 0 --[[ or meta.detect_current.w < 0 ]]
+                local invalid_h = meta.detect_current.h < 0
                 if options.fixed_width then
                     meta.detect_current.w = meta.size_origin.w
                     meta.detect_current.x = meta.size_origin.x
@@ -289,14 +308,15 @@ local function auto_crop()
 
                 -- Auto adjust black threshold and detect_seconds
                 local detect_size_origin = meta.detect_current.h == meta.size_origin.h
-                local bottom_limit_reach = detect_size_origin and limit_current < limit_last
+                local bottom_limit_reach = detect_size_origin and limit_current <= limit_last
+                --mp.msg.info(string.format("limit_curr:%s < limit_last:%s = %s, %s", limit_current, limit_last, detect_size_origin, bottom_limit_reach))
                 limit_last = limit_current
-                if in_margin_y and not invalid then
+                if in_margin_y and not invalid_h then
                     if limit_current < options.detect_limit then
                         if detect_size_origin then
                             if limit_current + limit_step * 2 <= options.detect_limit then
                                 limit_current = limit_current + limit_step * 2
-                                if limit_step >= .25 then
+                                if limit_step > .125 then
                                     limit_step = limit_step / 2
                                 end
                             else
@@ -387,7 +407,7 @@ end
 function cleanup()
     mp.msg.info("Cleanup.")
     -- Kill all timers.
-    for index, value in pairs(timer) do
+    for index in pairs(timer) do
         if timer[index]:is_enabled() then
             timer[index]:kill()
         end
@@ -395,7 +415,7 @@ function cleanup()
     -- Remove all timers.
     timer = {}
     -- Remove all existing filters.
-    for key, value in pairs(labels) do
+    for _, value in pairs(labels) do
         remove_filter(value)
     end
     -- Reset some values
@@ -476,7 +496,7 @@ local function pause(_, bool)
 end
 
 local function on_start()
-    mp.msg.info("Start.")
+    mp.msg.info("File loaded.")
     if not is_cropable() then
         mp.msg.warn("Exit, only works for videos.")
         return
