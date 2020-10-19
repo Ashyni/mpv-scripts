@@ -133,7 +133,7 @@ local function meta_stats(meta_curr, offset_y, debug)
         offset_y_count[name_offset] = offset_y_count[name_offset] + meta_stat[k].count
     end
     -- Maybe add an option to disable correction
-    if not debug and closet_meta and closest_meta.h ~= meta.apply_current.h and closest_meta.h ~= meta.detect_current.h then
+    if not debug and closest_meta and closest_meta.h ~= meta.detect_current.h then
         meta_copy(closest_meta, meta.detect_current)
     end
     if not closest_offset_y then
