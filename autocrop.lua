@@ -42,7 +42,6 @@ require "mp.options"
 
 local options = {
     mode = 4,
-    periodic_timer = 0,
     start_delay = 0,
     -- crop behavior
     prevent_change_timer = 0,
@@ -97,11 +96,10 @@ local function meta_copy(from, to)
 end
 
 local function meta_stats(meta_curr, offset_y, debug)
-    -- To-do match close metadata together and apply the most finded one
     -- Store stats
-    local closest_meta_count
+    local closest_meta_count, meta_whxy
     if not debug then
-        local meta_whxy = string.format("w=%s:h=%s:x=%s:y=%s", meta_curr.w, meta_curr.h, meta_curr.x, meta_curr.y)
+        meta_whxy = string.format("w=%s:h=%s:x=%s:y=%s", meta_curr.w, meta_curr.h, meta_curr.x, meta_curr.y)
         if not meta_stat[meta_whxy] then
             meta_stat[meta_whxy] = {unit}
             meta_stat[meta_whxy].count = 0
@@ -113,7 +111,7 @@ local function meta_stats(meta_curr, offset_y, debug)
     end
 
     local offset_y_count = {}
-    local majority_offset_y, closest_meta, closest_offset_y
+    local majority_offset_y, closest_meta, closest_offset_y, closest_meta_name
     for k in pairs(meta_stat) do
         if not debug then
             -- Closest metadata
@@ -123,9 +121,10 @@ local function meta_stats(meta_curr, offset_y, debug)
                 closest_meta_count = meta_stat[k].count
                 closest_meta = meta_stat[k]
                 closest_offset_y = meta_stat[k].offset_y
+                closest_meta_name = k
             end
         end
-        -- Offset Majority
+        -- Majority Offset
         local name_offset = string.format("%d", meta_stat[k].offset_y)
         if not offset_y_count[name_offset] then
             offset_y_count[name_offset] = 0
@@ -134,8 +133,10 @@ local function meta_stats(meta_curr, offset_y, debug)
     end
     -- Maybe add an option to disable correction
     if not debug and closest_meta and closest_meta.h ~= meta.detect_current.h then
+        mp.msg.info(string.format("Correct %s to %s.", meta_whxy, closest_meta_name))
         meta_copy(closest_meta, meta.detect_current)
     end
+    -- Fallback to majority offset
     if not closest_offset_y then
         local majority_offset_y_count = 0
         for k in pairs(offset_y_count) do
@@ -202,13 +203,16 @@ local function is_cropable()
 end
 
 local function insert_crop_filter()
-    local insert_crop_filter_command =
-        mp.command(string.format("no-osd vf pre @%s:lavfi-cropdetect=limit=%.3f/255:round=%d:reset=0", labels.cropdetect, limit_current, options.detect_round))
-    if not insert_crop_filter_command then
-        mp.msg.error("Does vf=help as #1 line in mvp.conf return libavfilter list with crop/cropdetect in log?")
-        filter_missing = true
-        cleanup()
-        return false
+    if not is_filter_present(labels.cropdetect) then
+        -- "vf pre" use source size and "vf add" use current size as comparison for offset math.
+        local insert_crop_filter_command =
+            mp.command(string.format("no-osd vf pre @%s:lavfi-cropdetect=limit=%.3f/255:round=%d:reset=0", labels.cropdetect, limit_current, options.detect_round))
+        if not insert_crop_filter_command then
+            mp.msg.error("Does vf=help as #1 line in mvp.conf return libavfilter list with crop/cropdetect in log?")
+            filter_missing = true
+            cleanup()
+            return false
+        end
     end
     return true
 end
@@ -221,6 +225,18 @@ end
 
 local function collect_metadata()
     local cropdetect_metadata = mp.get_property_native(string.format("vf-metadata/%s", labels.cropdetect))
+    -- debug
+    --[[ if cropdetect_metadata then
+        mp.msg.info(
+            string.format(
+                "raw detect_curr=w=%s:h=%s:x=%s:y=%s",
+                cropdetect_metadata["lavfi.cropdetect.w"],
+                cropdetect_metadata["lavfi.cropdetect.h"],
+                cropdetect_metadata["lavfi.cropdetect.x"],
+                cropdetect_metadata["lavfi.cropdetect.y"]
+            )
+        )
+    end ]]
     if cropdetect_metadata and cropdetect_metadata["lavfi.cropdetect.w"] then
         -- Remove filter to reset detection.
         remove_filter(labels.cropdetect)
@@ -236,7 +252,7 @@ local function collect_metadata()
     if paused or toggled or seeking then
         remove_filter(labels.cropdetect)
     else
-        detect_seconds = 0.05
+        detect_seconds = 0.025
     end
     return false
 end
@@ -309,35 +325,28 @@ local function auto_crop()
                 -- Auto adjust black threshold and detect_seconds
                 local detect_size_origin = meta.detect_current.h == meta.size_origin.h
                 local bottom_limit_reach = detect_size_origin and limit_current <= limit_last
-                --mp.msg.info(string.format("limit_curr:%s < limit_last:%s = %s, %s", limit_current, limit_last, detect_size_origin, bottom_limit_reach))
                 limit_last = limit_current
-                if in_margin_y and not invalid_h then
-                    if limit_current < options.detect_limit then
-                        if detect_size_origin then
-                            if limit_current + limit_step * 2 <= options.detect_limit then
-                                limit_current = limit_current + limit_step * 2
-                                if limit_step > .125 then
-                                    limit_step = limit_step / 2
-                                end
-                            else
-                                limit_current = options.detect_limit
-                            end
+                if detect_size_origin and limit_current < options.detect_limit then
+                    if limit_current + limit_step * 2 <= options.detect_limit then
+                        limit_current = limit_current + limit_step * 2
+                        if limit_step > .125 then
+                            limit_step = limit_step / 2
                         end
+                    else
+                        limit_current = options.detect_limit
                     end
-                    if not bottom_limit_reach then
-                        limit_step = 2
-                        limit_current = math.ceil(limit_current)
-                    end
+                    detect_seconds = .1
+                elseif in_margin_y and not invalid_h then
+                    limit_step = 2
+                    limit_current = math.ceil(limit_current)
                     detect_seconds = options.detect_seconds
-                else
-                    if limit_current > 0 then
-                        if limit_current - limit_step >= 0 then
-                            limit_current = limit_current - limit_step
-                        else
-                            limit_current = 0
-                        end
-                        detect_seconds = 0.05
+                elseif limit_current > 0 then
+                    if limit_current - limit_step >= 0 then
+                        limit_current = limit_current - limit_step
+                    else
+                        limit_current = 0
                     end
+                    detect_seconds = .1
                 end
 
                 -- Debug cropdetect meta
@@ -516,8 +525,7 @@ local function on_start()
         mp.add_timeout(
         start_delay,
         function()
-            local time_needed = options.periodic_timer
-            timer.periodic_timer = mp.add_periodic_timer(time_needed, auto_crop)
+            timer.periodic_timer = mp.add_periodic_timer(0, auto_crop)
         end
     )
 end
