@@ -24,13 +24,17 @@ script=/storage/emulated/0/Download/autocrop.lua
 ### Features
 
 - 5 mode available: 0 disable, 1 on-demand, 2 single-start, 3 auto-manual, 4 auto-start.
-- Multiple filters to prevent unwanted "cropping".
+- Support Asymmetric offset on Y axis, based on repeated value, setup by option `new_offset_timer`.
+- New aspect ratio are validate, based on repeated value, setup by option `new_aspect_ratio_timer`.
+- Fast change of already trusted metadata, after the first validation based `new_aspect_ratio_timer`.
+- Correction of value to prevent unwanted small change and helped in dark scene, its based on closest height metadata find in majority (fixed value of 1% for now).
 - Auto adjust black threshold.
 - Auto pause the script when seeking/loading.
 
 ### To-Do
 
-- Add width filter, for now it's recommended to keep `fixed_width = true`.
+- Add width_mode, for now only cropping with an offset_x 0 can occurs and depend on the options `new_aspect_ratio_timer`.
+- Add strict_mode, to allow only new aspect ratio of known values (1.78, 1.88, 2, 2.4 , 2.68, ...).
 - Documentation.
 
 ### OS
