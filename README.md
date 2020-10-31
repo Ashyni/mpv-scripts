@@ -8,7 +8,8 @@ Script to automatically "crop" in real time top/bottom black bar on Ultra Wide S
 
 ### Status
 
-Work in progress, some regressions occur during process.
+Start to be really good.
+Still work in progress, some regressions can occur during process.
 
 ### Usage
 
@@ -41,7 +42,7 @@ script=/storage/emulated/0/Download/autocrop.lua
 
  - Windows: OK ([mpv](https://mpv.io/) or [mpv-shim](https://github.com/iwalton3/jellyfin-mpv-shim))
  - Linux:   Not tested
- - Android: OK ([mpv-android](https://github.com/mpv-android/mpv-android)
+ - Android: OK ([mpv-android](https://github.com/mpv-android/mpv-android))
  - Mac:     Not tested
  - iOS:     Not tested
 
@@ -54,4 +55,8 @@ SHIFT+C do:
 
 ### Troubleshooting
 
-If the script doesn't work, make sure mpv is build with the libavfilter `crop` and `cropdetect` by starting mpv with `./mpv --vf=help` or by adding at the #1 line in mpv.conf `vf=help` and check the log for `V/mpv     : [cplayer:info] Available libavfilter filters:`.
+If the script doesn't work, make sure mpv is build with the libavfilter `crop` and `cropdetect` by starting mpv with `./mpv --vf=help` or by adding at the #1 line in mpv.conf `vf=help` and check the log for `mpv : [cplayer:info] Available libavfilter filters:`.
+
+#### Download on phone
+
+Use the Desktop mode with a navigator on this page to access the button `Code > Download Zip`.
