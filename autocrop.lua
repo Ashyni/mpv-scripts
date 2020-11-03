@@ -102,7 +102,7 @@ local function is_filter_present(label)
 end
 
 local function is_enough_time(seconds)
-    local time_needed = seconds + 5
+    local time_needed = seconds + .1
     local playtime_remaining = mp.get_property_native("playtime-remaining")
     if playtime_remaining and time_needed > playtime_remaining then
         mp.msg.warn("Not enough time for autocrop.")
@@ -374,7 +374,7 @@ function cleanup()
     limit_current = options.detect_limit
 end
 
-local function init_size()
+local function init_source()
     local width = mp.get_property_native("width")
     local height = mp.get_property_native("height")
     source = {
@@ -497,7 +497,7 @@ local function on_start()
         return
     end
 
-    init_size()
+    init_source()
 
     local start_delay
     if options.mode ~= 2 then
