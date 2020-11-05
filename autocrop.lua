@@ -7,7 +7,7 @@ Also It registers the key-binding "C" (shift+c). You can manually crop the video
 If the "C" key is pressed again, the crop filter is removed restoring playback to its original state.
 
 The workflow is as follows: First, it inserts the filter vf=lavfi=cropdetect. After <detect_seconds> (default is < 1)
-seconds, then w,h,x,y are gathered from the vf-metadata left by cropdetect. 
+seconds, then w,h,x,y are gathered from the vf-metadata left by cropdetect.
 The cropdetect filter is removed immediately after and finally it inserts the filter vf=lavfi=crop=w:h:x:y.
 
 The default options can be overridden by adding script-opts-append=autocrop-<parameter>=<value> into mpv.conf
@@ -25,8 +25,8 @@ detect_limit: number[0-255] - Black threshold for cropdetect.
     Smaller values will generally result in less cropping.
     See limit of https://ffmpeg.org/ffmpeg-filters.html#cropdetect
 
-detect_round: number[2^n] -  The value which the width/height should be divisible by 2. Smaller values have better detection
-    accuracy. If you have problems with other filters, you can try to set it to 4 or 16.
+detect_round: number[2^n] -  The value which the width/height should be divisible by 2. Smaller values
+    have better detection accuracy. If you have problems with other filters, you can try to set it to 4 or 16.
     See round of https://ffmpeg.org/ffmpeg-filters.html#cropdetect
 
 detect_seconds: seconds - How long to gather cropdetect data.
@@ -93,7 +93,7 @@ end
 
 local function is_filter_present(label)
     local filters = mp.get_property_native("vf")
-    for index, filter in pairs(filters) do
+    for _, filter in pairs(filters) do
         if filter["label"] == label then
             return true
         end
@@ -121,7 +121,14 @@ local function insert_crop_filter()
     if not is_filter_present(labels.cropdetect) then
         -- "vf pre" use source size and "vf add" use crop size as comparison for offset math.
         local insert_crop_filter_command =
-            mp.command(string.format("no-osd vf pre @%s:lavfi-cropdetect=limit=%.3f/255:round=%d:reset=0", labels.cropdetect, limit_current, options.detect_round))
+            mp.command(
+            string.format(
+                "no-osd vf pre @%s:lavfi-cropdetect=limit=%.1f/255:round=%d:reset=0",
+                labels.cropdetect,
+                limit_current,
+                options.detect_round
+            )
+        )
         if not insert_crop_filter_command then
             mp.msg.error("Does vf=help as #1 line in mvp.conf return libavfilter list with crop/cropdetect in log?")
             filter_missing = true
@@ -206,10 +213,21 @@ local function auto_crop()
                 local invalid_h = tmp.h < 0
                 local in_margin_y = tmp.y >= 0 and tmp.y <= source.h - tmp.h
                 local bottom_limit_reach = tmp.detect_source and limit_current < limit_last
-                local confirmation, detect_source
+                local confirmation, detect_source, last_seen
 
                 -- Debug cropdetect meta
-                --mp.msg.info(string.format("detect_curr=w=%s:h=%s:x=%s:y=%s offsetY:%s limit:%s limit_step:%s", tmp.w, tmp.h, tmp.x, tmp.y, tmp.offset_y, limit_current, limit_step))
+                --[[ mp.msg.info(
+                    string.format(
+                        "detect_curr=w=%s:h=%s:x=%s:y=%s offsetY:%s limit:%s limit_step:%s",
+                        tmp.w,
+                        tmp.h,
+                        tmp.x,
+                        tmp.y,
+                        tmp.offset_y,
+                        limit_current,
+                        limit_step
+                    )
+                ) ]]
                 -- Store cropping meta, find trusted offset, and correct to closest meta if neccessary.
                 if in_margin_y and not bottom_limit_reach then
                     -- Store stats
@@ -252,7 +270,9 @@ local function auto_crop()
                             stats[k].counter.last_seen = stats[k].counter.last_seen - 1
                         end
                         -- Closest metadata
-                        local meta_in_margin_h = tmp.h >= stats[k].h - margin_correct and tmp.h <= stats[k].h + margin_correct and stats[k].counter.detect > closest.counter.detect
+                        local meta_in_margin_h =
+                            tmp.h >= stats[k].h - margin_correct and tmp.h <= stats[k].h + margin_correct and
+                            stats[k].counter.detect > closest.counter.detect
                         if meta_in_margin_h then
                             closest = stats[k]
                             closest.whxy = k
@@ -271,9 +291,12 @@ local function auto_crop()
                     end
                     confirmation =
                         not tmp.detect_source and
-                        (stats[tmp.whxy].counter.applied > 0 and math.max(0, stats[tmp.whxy].counter.last_seen) + stats[tmp.whxy].counter.correct > 1 or
-                            stats[tmp.whxy].counter.last_seen > math.floor(source.h / tmp.h * new_aspect_ratio_timer + .5))
-                    detect_source = tmp.detect_source and (limit_current > limit_last or stats[tmp.whxy].counter.last_seen > 1)
+                        (stats[tmp.whxy].counter.applied > 0 and
+                            math.max(0, stats[tmp.whxy].counter.last_seen) + stats[tmp.whxy].counter.correct > 1 or
+                            stats[tmp.whxy].counter.last_seen >
+                                math.floor(source.h / tmp.h * new_aspect_ratio_timer + .5))
+                    detect_source =
+                        tmp.detect_source and (limit_current > limit_last or stats[tmp.whxy].counter.last_seen > 1)
                     last_seen = stats[tmp.whxy].counter.last_seen > 1
                 end
 
@@ -284,8 +307,10 @@ local function auto_crop()
                 if tmp.detect_source and limit_current < options.detect_limit then
                     if limit_current + limit_step * 2 <= options.detect_limit then
                         limit_current = limit_current + limit_step * 2
-                        if limit_step > .125 then
+                        if limit_step > .5 then
                             limit_step = limit_step / 2
+                        else
+                            limit_step = .1
                         end
                     else
                         limit_current = options.detect_limit
@@ -305,7 +330,9 @@ local function auto_crop()
                 end
 
                 -- Crop Filter:
-                local crop_filter = not invalid_h and not tmp.already_apply and trusted_offset_x and trusted_offset_y and (confirmation or detect_source)
+                local crop_filter =
+                    not invalid_h and not tmp.already_apply and trusted_offset_x and trusted_offset_y and
+                    (confirmation or detect_source)
                 if crop_filter then
                     -- Applied cropping.
                     stats[tmp.whxy].counter.applied = stats[tmp.whxy].counter.applied + 1
@@ -313,7 +340,11 @@ local function auto_crop()
                         mp.command(string.format("no-osd vf pre @%s:lavfi-crop=%s", labels.crop, tmp.whxy))
                         -- Prevent upcomming change if a timer is defined
                         if options.prevent_change_timer > 0 then
-                            if options.prevent_change_mode == 1 and tmp.h > applied.h or options.prevent_change_mode == 2 and tmp.h < applied.h or options.prevent_change_mode == 0 then
+                            if
+                                options.prevent_change_mode == 1 and tmp.h > applied.h or
+                                    options.prevent_change_mode == 2 and tmp.h < applied.h or
+                                    options.prevent_change_mode == 0
+                             then
                                 timer.prevent_change =
                                     mp.add_timeout(
                                     options.prevent_change_timer,
