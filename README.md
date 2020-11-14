@@ -6,7 +6,7 @@ Script to automatically "crop" in real time top/bottom black bar on Ultra Wide S
 
 ## Status
 
-Starting to get really good.
+It's starting to be really effective.\n
 Still work in progress, some regressions can occur during process.
 
 ## Usage
@@ -17,7 +17,7 @@ Edit your `mpv.conf` file to add `script=<path to the script>`, eg:
 #Windows mpv-shim:
 script=C:\Users\<username>\AppData\Roaming\jellyfin-mpv-shim\scripts\autocrop.lua
 #Android mpv-android:
-script=/storage/emulated/0/Download/autocrop.lua
+script=/storage/emulated/0/mpv/autocrop.lua
 ```
 
 ## Features
@@ -26,12 +26,13 @@ script=/storage/emulated/0/Download/autocrop.lua
 - Support Asymmetric offset on Y axis, based on repeated value, setup by option `new_offset_timer`.
 - New aspect ratio are validate, based on repeated value, setup by option `new_aspect_ratio_timer`.
 - Fast change of already trusted metadata, after the first validation based `new_aspect_ratio_timer`.
-- Correction of value to prevent unwanted small change and helped in dark scene, its based on closest height metadata find in majority (fixed value of 1% for now).
+- Correction of value to prevent unwanted small change and helped in dark scene, its based on closest height metadata find in majority (1% of the current detection).
 - Auto adjust black threshold.
 - Auto pause the script when seeking/loading.
 
 ## To-Do
 
+- Avoid resize of the window in windowed/maximized mode when cropping.
 - Add width_mode, for now only cropping with an offset_x 0 can occurs and depend on the options `new_aspect_ratio_timer`.
 - Add strict_mode, to allow only new aspect ratio of known values (1.78, 1.88, 2, 2.4 , 2.68, ...).
 - Documentation.
@@ -53,7 +54,7 @@ SHIFT+C do:
 
 ## Troubleshooting
 
-If the script doesn't work, make sure mpv is build with the libavfilter `crop` and `cropdetect` by starting mpv with `./mpv --vf=help` or by adding at the #1 line in mpv.conf `vf=help` and check the log for `mpv : [cplayer:info] Available libavfilter filters:`.
+If the script doesn't work, make sure mpv is build with the libavfilter `crop` and `cropdetect` by starting mpv with `./mpv --vf=help` or by adding at the #1 line in mpv.conf `vf=help` and check the log for `Available libavfilter filters:`.
 
 ## Download on phone
 
