@@ -6,7 +6,8 @@ Script to automatically "crop" in real time top/bottom black bar on Ultra Wide S
 
 ## Status
 
-It's starting to be really effective.\n
+It's starting to be really effective.
+<br/>
 Still work in progress, some regressions can occur during process.
 
 ## Usage
