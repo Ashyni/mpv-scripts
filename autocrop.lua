@@ -42,7 +42,10 @@ local options = {
     prevent_change_timer = 0,
     prevent_change_mode = 2,
     new_offset_timer = 10,
-    new_aspect_ratio_timer = 3,
+    new_aspect_ratio_timer = 5,
+    fast_change_timer = 2,
+    correction_pct = 0.01,
+    resize_windowed = true,
     -- cropdetect
     detect_limit = 24,
     detect_round = 2,
@@ -64,8 +67,10 @@ local labels = {
     cropdetect = string.format("%s-cropdetect", label_prefix)
 }
 -- option
-local new_aspect_ratio_timer = math.ceil(options.new_aspect_ratio_timer / (options.detect_seconds + .05))
 local detect_seconds = options.detect_seconds
+local new_offset_timer = math.ceil(options.new_offset_timer / (detect_seconds + .05))
+local new_aspect_ratio_timer = math.ceil(options.new_aspect_ratio_timer / (detect_seconds + .05))
+local fast_change_timer = math.ceil(options.fast_change_timer / (detect_seconds + .05))
 local limit_current = options.detect_limit
 local limit_last = options.detect_limit
 local limit_step = 2
@@ -101,6 +106,7 @@ local function is_filter_present(label)
     return false
 end
 
+-- To-do rework
 local function is_enough_time(seconds)
     local time_needed = seconds + .1
     local playtime_remaining = mp.get_property_native("playtime-remaining")
@@ -123,7 +129,7 @@ local function insert_crop_filter()
         local insert_crop_filter_command =
             mp.command(
             string.format(
-                "no-osd vf pre @%s:lavfi-cropdetect=limit=%.1f/255:round=%d:reset=0",
+                "no-osd vf pre @%s:lavfi-cropdetect=limit=%.3f/255:round=%d:reset=0",
                 labels.cropdetect,
                 limit_current,
                 options.detect_round
@@ -154,6 +160,25 @@ local function tmp_stats(meta, stat_)
         tmp.already_apply = meta.whxy == applied.whxy
         tmp.offset_x = (source.w - meta.w) / 2 - meta.x
         tmp.offset_y = (source.h - meta.h) / 2 - meta.y
+    end
+end
+
+local function prevent_resize()
+    local maximized = mp.get_property("window-maximized")
+    local fullscreen = mp.get_property("fullscreen")
+    if fullscreen == "no" then
+        -- Keep window width to avoid reset to source size when cropping.
+        local osd = mp.get_property_native("osd-dimensions")
+        local w_r = tonumber(osd.w) - (tonumber(osd.ml) + tonumber(osd.mr))
+        -- print("osd-width: ", osd.w, "osd-height: ", osd.h, "margin: ", osd.mt, osd.mb, osd.ml, osd.mr)
+        if maximized == "no" then
+            if options.resize_windowed then
+                mp.set_property("geometry", string.format("%s", w_r))
+                mp.set_property("autofit", string.format("%s", w_r))
+            else
+                mp.set_property("geometry", string.format("%sx%s", osd.w, osd.h))
+            end
+        end
     end
 end
 
@@ -213,7 +238,6 @@ local function auto_crop()
                 local invalid_h = tmp.h < 0
                 local in_margin_y = tmp.y >= 0 and tmp.y <= source.h - tmp.h
                 local bottom_limit_reach = tmp.detect_source and limit_current < limit_last
-                local confirmation, detect_source, last_seen
 
                 -- Debug cropdetect meta
                 --[[ mp.msg.info(
@@ -231,7 +255,6 @@ local function auto_crop()
                 -- Store cropping meta, find trusted offset, and correct to closest meta if neccessary.
                 if in_margin_y and not bottom_limit_reach then
                     -- Store stats
-                    local margin_correct = math.floor(tmp.h * 0.01)
                     if not stats[tmp.whxy] then
                         stats[tmp.whxy] = {}
                         stats[tmp.whxy].counter = {detect = 0, last_seen = 0, correct = 0, applied = 0}
@@ -245,23 +268,15 @@ local function auto_crop()
                     stats[tmp.whxy].counter.last_seen = stats[tmp.whxy].counter.last_seen + 1
                     local closest = stats[tmp.whxy]
                     -- Add Trusted Offset
-                    if not is_trusted_offset(tmp.offset_y, "y") then
-                        if not timer.new_offset_y then
-                            timer.new_offset_y =
-                                mp.add_timeout(
-                                options.new_offset_timer,
-                                function()
-                                end
-                            )
-                        elseif stats[tmp.whxy].counter.last_seen > 1 and not timer.new_offset_y:is_enabled() then
-                            table.insert(trusted_offset.y, stats[tmp.whxy].offset_y)
-                        end
-                    end
-                    if timer.new_offset_y and stats[tmp.whxy].counter.last_seen == 1 then
-                        timer.new_offset_y:kill()
-                        timer.new_offset_y:resume()
+                    local add_new_offset =
+                        not is_trusted_offset(tmp.offset_y, "y") and
+                        stats[tmp.whxy].counter.last_seen > new_offset_timer
+                    if add_new_offset then
+                        table.insert(trusted_offset.y, stats[tmp.whxy].offset_y)
                     end
 
+                    local margin_correct_h = math.floor(tmp.h * options.correction_pct)
+                    local margin_correct_w = math.floor(tmp.w * options.correction_pct)
                     for k in pairs(stats) do
                         if k ~= tmp.whxy then
                             if stats[k].counter.last_seen > 0 then
@@ -271,16 +286,18 @@ local function auto_crop()
                         end
                         -- Closest metadata
                         local meta_in_margin_h =
-                            tmp.h >= stats[k].h - margin_correct and tmp.h <= stats[k].h + margin_correct and
-                            stats[k].counter.detect > closest.counter.detect
-                        if meta_in_margin_h then
+                            tmp.h >= stats[k].h - margin_correct_h and tmp.h <= stats[k].h + margin_correct_h
+                        local meta_in_margin_w =
+                            tmp.w >= stats[k].w - margin_correct_w and tmp.w <= stats[k].w + margin_correct_w
+                        local maj_detect = stats[k].counter.detect > closest.counter.detect
+                        if meta_in_margin_h and meta_in_margin_w and maj_detect then
                             closest = stats[k]
                             closest.whxy = k
                         end
                     end
                     -- Maybe add an option to disable correction
                     if closest and is_trusted_offset(closest.offset_y, "y") and closest.whxy ~= tmp.whxy then
-                        --mp.msg.info(string.format("Correct %s to %s.", tmp.whxy, closest.whxy))
+                        mp.msg.info(string.format("Correct %s to %s.", tmp.whxy, closest.whxy))
                         copy_meta(closest, tmp)
                         tmp_stats(tmp)
                         if stats[tmp.whxy].counter.correct > 2 or tmp.already_apply then
@@ -289,28 +306,31 @@ local function auto_crop()
                             stats[tmp.whxy].counter.correct = stats[tmp.whxy].counter.correct + 1
                         end
                     end
-                    confirmation =
-                        not tmp.detect_source and
-                        (stats[tmp.whxy].counter.applied > 0 and
-                            math.max(0, stats[tmp.whxy].counter.last_seen) + stats[tmp.whxy].counter.correct > 1 or
-                            stats[tmp.whxy].counter.last_seen >
-                                math.floor(source.h / tmp.h * new_aspect_ratio_timer + .5))
-                    detect_source =
-                        tmp.detect_source and (limit_current > limit_last or stats[tmp.whxy].counter.last_seen > 1)
-                    last_seen = stats[tmp.whxy].counter.last_seen > 1
                 end
 
+                -- Scale, bigger the ratio is, more time is needed for comfirmation
+                local confirmation =
+                    not tmp.detect_source and
+                    (stats[tmp.whxy].counter.applied > 0 and
+                        math.max(0, stats[tmp.whxy].counter.last_seen) + stats[tmp.whxy].counter.correct >
+                            fast_change_timer or
+                        stats[tmp.whxy].counter.last_seen > math.floor(source.h / tmp.h * new_aspect_ratio_timer + .5))
+                local detect_source =
+                    tmp.detect_source and
+                    (limit_current > limit_last or stats[tmp.whxy].counter.last_seen > fast_change_timer)
+                local last_seen = stats[tmp.whxy].counter.last_seen > 1
                 local trusted_offset_y = is_trusted_offset(tmp.offset_y, "y")
                 local trusted_offset_x = is_trusted_offset(tmp.offset_x, "x")
+
                 -- Auto adjust black threshold and detect_seconds
                 limit_last = limit_current
                 if tmp.detect_source and limit_current < options.detect_limit then
                     if limit_current + limit_step * 2 <= options.detect_limit then
                         limit_current = limit_current + limit_step * 2
-                        if limit_step > .5 then
+                        if stats[tmp.whxy].counter.last_seen > 2 then
+                            limit_step = 2
+                        elseif limit_step >= .25 then
                             limit_step = limit_step / 2
-                        else
-                            limit_step = .1
                         end
                     else
                         limit_current = options.detect_limit
@@ -363,7 +383,9 @@ local function auto_crop()
 
                 -- Cleanup Stats
                 for k in pairs(stats) do
-                    if stats[k].counter.detect < 20 and stats[k].counter.last_seen < 0 and stats[k].counter.applied < 1 then
+                    local stat_minority =
+                        stats[k].counter.detect < 20 and stats[k].counter.last_seen < 0 and stats[k].counter.applied < 1
+                    if stat_minority then
                         -- Remove mistrusted offset, if any, except 0.
                         for k1, v1 in pairs(trusted_offset.y) do
                             if stats[k].offset_y == v1 and stats[k].offset_y ~= 0 then
@@ -420,8 +442,7 @@ local function init_source()
     stats[source.whxy].counter = {detect = 0, last_seen = 0, correct = 0, applied = 1}
     stats[source.whxy].offset_y = 0
     copy_meta(source, stats[source.whxy])
-    trusted_offset.y = {0}
-    trusted_offset.x = {0}
+    trusted_offset.y, trusted_offset.x = {0}, {0}
 end
 
 local function seek(name)
@@ -430,9 +451,6 @@ local function seek(name)
         timer.periodic_timer:kill()
         if timer.crop_detect then
             timer.crop_detect = nil
-        end
-        if timer.new_offset_y then
-            timer.new_offset_y:stop()
         end
     end
 end
@@ -451,9 +469,6 @@ local function resume(name)
         timer.start_delay.timeout = 0
         timer.start_delay:kill()
         timer.start_delay:resume()
-    end
-    if timer.new_offset_y then
-        timer.new_offset_y:resume()
     end
 end
 
@@ -529,6 +544,8 @@ local function on_start()
     end
 
     init_source()
+
+    mp.observe_property("osd-dimensions", "native", prevent_resize)
 
     local start_delay
     if options.mode ~= 2 then
