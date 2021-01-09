@@ -33,7 +33,6 @@ script=/storage/emulated/0/mpv/autocrop.lua
 
 ## To-Do
 
-- Avoid resize of the window in windowed/maximized mode when cropping.
 - Add width_mode, for now only cropping with an offset_x 0 can occurs and depend on the options `new_aspect_ratio_timer`.
 - Add strict_mode, to allow only new aspect ratio of known values (1.78, 1.88, 2, 2.4 , 2.68, ...).
 - Documentation.
