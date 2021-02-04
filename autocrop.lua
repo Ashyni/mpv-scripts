@@ -507,7 +507,7 @@ local function pause(_, bool)
             paused = true
             seek("pause")
             -- Debug Stats
-            if stats then
+            if stats and trusted_offset.y then
                 mp.msg.info("Meta Stats:")
                 local read_maj_offset_y = ""
                 for _, v in pairs(trusted_offset.y) do
