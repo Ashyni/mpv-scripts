@@ -318,7 +318,6 @@ local function auto_crop()
                 local detect_source =
                     tmp.detect_source and
                     (limit_current > limit_last or stats[tmp.whxy].counter.last_seen > fast_change_timer)
-                local last_seen = stats[tmp.whxy].counter.last_seen > 1
                 local trusted_offset_y = is_trusted_offset(tmp.offset_y, "y")
                 local trusted_offset_x = is_trusted_offset(tmp.offset_x, "x")
 
@@ -336,9 +335,20 @@ local function auto_crop()
                         limit_current = options.detect_limit
                     end
                     detect_seconds = .1
-                elseif (last_seen or trusted_offset_y) and not invalid_h then
+                elseif (stats[tmp.whxy].counter.last_seen > 1 or trusted_offset_y) and not invalid_h then
                     limit_step = 2
-                    limit_current = math.ceil(limit_current)
+                    -- Allow detection of a second brighter crop
+                    local timer_reset = new_offset_timer + 1
+                    if stats[tmp.whxy].counter.applied > 0 then
+                        timer_reset = fast_change_timer + 1
+                    elseif trusted_offset_y and trusted_offset_x then
+                        timer_reset = new_aspect_ratio_timer + 1
+                    end
+                    if stats[tmp.whxy].counter.last_seen > timer_reset then
+                        limit_current = options.detect_limit
+                    else
+                        limit_current = math.ceil(limit_current)
+                    end
                     detect_seconds = options.detect_seconds
                 elseif limit_current > 0 then
                     if limit_current - limit_step >= 0 then
