@@ -106,7 +106,7 @@ local function is_filter_present(label)
     return false
 end
 
--- To-do rework
+-- To-do, rework for live content
 local function is_enough_time(seconds)
     local time_needed = seconds + .1
     local playtime_remaining = mp.get_property_native("playtime-remaining")
