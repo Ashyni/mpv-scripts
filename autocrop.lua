@@ -36,9 +36,9 @@ require "mp.msg"
 require "mp.options"
 
 local options = {
+    -- crop behavior
     mode = 4,
     start_delay = 0,
-    -- crop behavior
     prevent_change_timer = 0,
     prevent_change_mode = 2,
     new_offset_timer = 10,
@@ -46,7 +46,7 @@ local options = {
     fast_change_timer = 2,
     correction_pct = 0.01,
     resize_windowed = true,
-    -- cropdetect
+    -- crop detect
     detect_limit = 24,
     detect_round = 2,
     detect_seconds = 0.45
@@ -58,9 +58,9 @@ if options.mode == 0 then
     return
 end
 
--- Forward declarations
+-- Forward declaration
 local cleanup
--- Init variables
+-- label
 local label_prefix = mp.get_script_name()
 local labels = {
     crop = string.format("%s-crop", label_prefix),
@@ -104,17 +104,6 @@ local function is_filter_present(label)
         end
     end
     return false
-end
-
--- To-do, rework for live content
-local function is_enough_time(seconds)
-    local time_needed = seconds + .1
-    local playtime_remaining = mp.get_property_native("playtime-remaining")
-    if playtime_remaining and time_needed > playtime_remaining then
-        mp.msg.warn("Not enough time for autocrop.")
-        return false
-    end
-    return true
 end
 
 local function is_cropable()
@@ -163,15 +152,15 @@ local function tmp_stats(meta, stat_)
     end
 end
 
-local function prevent_resize()
-    local maximized = mp.get_property("window-maximized")
-    local fullscreen = mp.get_property("fullscreen")
-    if fullscreen == "no" then
+local function osd_size_change()
+    local prop_maximized = mp.get_property("window-maximized")
+    local prop_fullscreen = mp.get_property("fullscreen")
+    local osd = mp.get_property_native("osd-dimensions")
+    if prop_fullscreen == "no" then
         -- Keep window width to avoid reset to source size when cropping.
-        local osd = mp.get_property_native("osd-dimensions")
         local w_r = tonumber(osd.w) - (tonumber(osd.ml) + tonumber(osd.mr))
         -- print("osd-width: ", osd.w, "osd-height: ", osd.h, "margin: ", osd.mt, osd.mb, osd.ml, osd.mr)
-        if maximized == "no" then
+        if prop_maximized == "no" then
             if options.resize_windowed then
                 mp.set_property("geometry", string.format("%s", w_r))
                 mp.set_property("autofit", string.format("%s", w_r))
@@ -217,17 +206,11 @@ local function auto_crop()
         return
     end
 
-    -- Verify if there is enough time to detect crop.
-    local time_needed = detect_seconds
-    if not is_enough_time(time_needed) then
-        in_progress = false
-        return
-    end
-
     if not insert_crop_filter() then
         return
     end
 
+    local time_needed = detect_seconds
     -- Wait to gather data.
     timer.crop_detect =
         mp.add_timeout(
@@ -275,6 +258,7 @@ local function auto_crop()
                         table.insert(trusted_offset.y, stats[tmp.whxy].offset_y)
                     end
 
+                    -- Meta correction
                     local margin_correct_h = math.floor(tmp.h * options.correction_pct)
                     local margin_correct_w = math.floor(tmp.w * options.correction_pct)
                     for k in pairs(stats) do
@@ -295,7 +279,7 @@ local function auto_crop()
                             closest.whxy = k
                         end
                     end
-                    -- Maybe add an option to disable correction
+                    -- Apply correction
                     if closest and is_trusted_offset(closest.offset_y, "y") and closest.whxy ~= tmp.whxy then
                         mp.msg.info(string.format("Correct %s to %s.", tmp.whxy, closest.whxy))
                         copy_meta(closest, tmp)
@@ -308,7 +292,7 @@ local function auto_crop()
                     end
                 end
 
-                -- Scale, bigger the ratio is, more time is needed for comfirmation
+                -- Scaling on ratio change (bigger the ratio is, more time is needed for confirmation)
                 local confirmation =
                     not tmp.detect_source and
                     (stats[tmp.whxy].counter.applied > 0 and
@@ -396,7 +380,7 @@ local function auto_crop()
                     local stat_minority =
                         stats[k].counter.detect < 20 and stats[k].counter.last_seen < 0 and stats[k].counter.applied < 1
                     if stat_minority then
-                        -- Remove mistrusted offset, if any, except 0.
+                        -- Remove unwanted offset, if any, except 0.
                         for k1, v1 in pairs(trusted_offset.y) do
                             if stats[k].offset_y == v1 and stats[k].offset_y ~= 0 then
                                 table.remove(trusted_offset.y, k1)
@@ -555,7 +539,7 @@ local function on_start()
 
     init_source()
 
-    mp.observe_property("osd-dimensions", "native", prevent_resize)
+    mp.observe_property("osd-dimensions", "native", osd_size_change)
 
     local start_delay
     if options.mode ~= 2 then
