@@ -27,14 +27,14 @@ script=/storage/emulated/0/mpv/autocrop.lua
 - Support Asymmetric offset on Y axis, based on repeated value, setup by option `new_offset_timer`.
 - New aspect ratio are validate, based on repeated value, setup by option `new_aspect_ratio_timer`.
 - Fast change of already trusted metadata, after the first validation based `new_aspect_ratio_timer`.
-- Correction of value to prevent unwanted small change and helped in dark scene, its based on closest height metadata find in majority (1% of the current detection).
+- Correction of random metadata to an already trusted one, without preventing a new offset to be discovered, this mostly help to get a fast aspect ratio change with dark/ambiguous scene (limited to 50% of the source width/height).
 - Auto adjust black threshold.
 - Auto pause the script when seeking/loading.
 
 ## To-Do
 
 - Add width_mode, for now only cropping with an offset_x 0 can occurs and depend on the options `new_aspect_ratio_timer`.
-- Add strict_mode, to allow only new aspect ratio of known values (1.78, 1.88, 2, 2.4 , 2.68, ...).
+- Add strict_mode, to allow only new aspect ratio of known values (2.39, 2.35, 2, 1.85, 16/9, 4/3, ...).
 - Documentation.
 
 ## OS
