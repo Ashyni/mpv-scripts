@@ -41,15 +41,16 @@ local options = {
     start_delay = 0,
     prevent_change_timer = 0,
     prevent_change_mode = 2,
-    new_offset_timer = 10,
+    new_offset_timer = 12,
     new_aspect_ratio_timer = 5,
     fast_change_timer = 2,
-    correction_pct = 0.01,
     resize_windowed = true,
     -- crop detect
     detect_limit = 24,
     detect_round = 2,
-    detect_seconds = 0.45
+    detect_seconds = 0.45,
+    -- debug
+    debug = false
 }
 read_options(options)
 
@@ -78,8 +79,8 @@ local limit_step = 2
 local timer = {}
 local in_progress, paused, toggled, seeking, filter_missing
 -- metadata
-local source, applied, stats, trusted_offset, tmp = {}, {}, {}, {}, {}
-local unit = {"w", "h", "x", "y", "whxy"}
+local source, applied, stats, trusted_offset, collected = {}, {}, {}, {}, {}
+local units = {"w", "h", "x", "y", "whxy", "mt", "mb", "ml", "mr"}
 
 local function is_trusted_offset(offset, axis)
     for _, v in pairs(trusted_offset[axis]) do
@@ -91,8 +92,8 @@ local function is_trusted_offset(offset, axis)
 end
 
 local function copy_meta(from, to)
-    for _, v in pairs(unit) do
-        to[v] = from[v]
+    for _, unit in pairs(units) do
+        to[unit] = from[unit]
     end
 end
 
@@ -140,16 +141,16 @@ local function remove_filter(label)
     end
 end
 
-local function tmp_stats(meta, stat_)
-    if not stat_ or stat_ == "whxy" then
-        meta.whxy = string.format("w=%s:h=%s:x=%s:y=%s", meta.w, meta.h, meta.x, meta.y)
-    end
-    if not stat_ then
-        tmp.detect_source = meta.whxy == source.whxy
-        tmp.already_apply = meta.whxy == applied.whxy
-        tmp.offset_x = (source.w - meta.w) / 2 - meta.x
-        tmp.offset_y = (source.h - meta.h) / 2 - meta.y
-    end
+local function compute_meta(meta)
+    meta.whxy = string.format("w=%s:h=%s:x=%s:y=%s", meta.w, meta.h, meta.x, meta.y)
+    meta.detect_source = meta.whxy == source.whxy
+    meta.already_apply = meta.whxy == applied.whxy
+    meta.offset_x = meta.x - (source.w - meta.w) / 2
+    meta.offset_y = meta.y - (source.h - meta.h) / 2
+    meta.mt = meta.y
+    meta.mb = source.h - meta.h - meta.y
+    meta.ml = meta.x
+    meta.mr = source.w - meta.w - meta.x
 end
 
 local function osd_size_change()
@@ -171,13 +172,40 @@ local function osd_size_change()
     end
 end
 
+local function print_debug(short, label, meta)
+    if options.debug then
+        if not short then
+            print(
+                string.format(
+                    "%s, w:%s h:%s x:%s y:%s | mt:%s mb:%s ml:%s mr:%s | Offset X:%s Y:%s | limit:%s step:%s",
+                    label,
+                    meta.w,
+                    meta.h,
+                    meta.x,
+                    meta.y,
+                    meta.mt,
+                    meta.mb,
+                    meta.ml,
+                    meta.mr,
+                    meta.offset_x,
+                    meta.offset_y,
+                    limit_current,
+                    limit_step
+                )
+            )
+        else
+            print(short)
+        end
+    end
+end
+
 local function collect_metadata()
     local cropdetect_metadata = mp.get_property_native(string.format("vf-metadata/%s", labels.cropdetect))
     if cropdetect_metadata and cropdetect_metadata["lavfi.cropdetect.w"] then
         -- Remove filter to reset detection.
         remove_filter(labels.cropdetect)
         -- Make metadata usable.
-        tmp = {
+        collected = {
             w = tonumber(cropdetect_metadata["lavfi.cropdetect.w"]),
             h = tonumber(cropdetect_metadata["lavfi.cropdetect.h"]),
             x = tonumber(cropdetect_metadata["lavfi.cropdetect.x"]),
@@ -191,6 +219,223 @@ local function collect_metadata()
         detect_seconds = 0.025
     end
     return false
+end
+
+local function process_metadata()
+    compute_meta(collected)
+    print_debug(nil, "Collected", collected)
+    local invalid = not (collected.h > 0 and collected.w > 0)
+    local in_margin_y = collected.y >= 0 and collected.y <= source.h - collected.h
+    local bottom_limit_reach = collected.detect_source and limit_current < limit_last
+    -- Store cropping meta, find trusted offset, and correct to closest meta if neccessary.
+    if in_margin_y and not bottom_limit_reach then
+        -- Store stats[whxy]
+        if not stats[collected.whxy] then
+            stats[collected.whxy] = {
+                counter = {applied = 0, detect = 0, last_seen = 0, potential = 0},
+                offset_y = collected.offset_y
+            }
+            copy_meta(collected, stats[collected.whxy])
+        end
+        stats[collected.whxy].counter.detect = stats[collected.whxy].counter.detect + 1
+        -- Cycle potential
+        stats[collected.whxy].counter.potential = stats[collected.whxy].counter.potential + 1
+        if stats[collected.whxy].counter.applied > 0 then
+            stats[collected.whxy].counter.potential = 0
+        end
+        for whxy in pairs(stats) do
+            if whxy ~= collected.whxy and stats[whxy].counter.potential then
+                if stats[whxy].counter.potential > 0 then
+                    stats[whxy].counter.potential = 0
+                end
+            end
+        end
+
+        -- Add Trusted Offset
+        local add_new_offset =
+            not invalid and not is_trusted_offset(collected.offset_y, "y") and
+            stats[collected.whxy].counter.potential > new_offset_timer
+        if add_new_offset then
+            table.insert(trusted_offset.y, stats[collected.whxy].offset_y)
+        end
+
+        -- Meta correction
+        if
+            not invalid and stats[collected.whxy].counter.applied == 0 and
+                (collected.w > source.w * 0.5 or collected.h > source.h * 0.5)
+         then
+            collected.corrected = {}
+            -- Find closest margin already trusted
+            local closest = {}
+            for whxy in pairs(stats) do
+                local diff = {}
+                for _, margin in pairs({"mt", "mb", "ml", "mr"}) do
+                    diff[margin] =
+                        math.max(collected[margin], stats[whxy][margin]) -
+                        math.min(collected[margin], stats[whxy][margin])
+                end
+                --print_debug(string.format("\\ Search %s | %s %s %s %s", whxy, diff.mt, diff.mb, diff.ml, diff.mr))
+                if
+                    stats[whxy].counter.applied > 0 and (not closest.count_mt or diff.mt <= closest.count_mt) and
+                        (not closest.count_mb or diff.mb <= closest.count_mb) and
+                        (not closest.count_ml or diff.ml <= closest.count_ml) and
+                        (not closest.count_mr or diff.mr <= closest.count_mr)
+                 then
+                    closest.count_mt = diff.mt
+                    closest.count_mb = diff.mb
+                    closest.count_ml = diff.ml
+                    closest.count_mr = diff.mr
+                    closest.whxy = whxy
+                --print_debug(string.format("\\ Find %s", closest.whxy))
+                end
+                if closest.whxy then
+                    -- Correct
+                    copy_meta(collected, collected.corrected)
+                    collected.corrected.w = stats[closest.whxy].w
+                    collected.corrected.h = stats[closest.whxy].h
+                    collected.corrected.x = stats[closest.whxy].x
+                    collected.corrected.y = stats[closest.whxy].y
+                    compute_meta(collected.corrected)
+                end
+            end
+            -- Check if the corrected data already exist/applied or flush it
+            if not stats[collected.corrected.whxy] or collected.corrected.whxy == applied.whxy then
+                collected.corrected = nil
+            end
+        end
+    end
+
+    -- Use corrected metadata as main data
+    local current = collected
+    if current.corrected then
+        print_debug(nil, "\\ Corrected", collected.corrected)
+        current = collected.corrected
+    end
+
+    -- Cycle last_seen
+    for whxy in pairs(stats) do
+        if whxy ~= current.whxy then
+            if stats[whxy].counter.last_seen > 0 then
+                stats[whxy].counter.last_seen = 0
+            end
+            stats[whxy].counter.last_seen = stats[whxy].counter.last_seen - 1
+        else
+            if stats[whxy].counter.last_seen < 0 then
+                stats[whxy].counter.last_seen = 0
+            end
+            stats[whxy].counter.last_seen = stats[whxy].counter.last_seen + 1
+        end
+    end
+
+    -- Scaling on ratio change (bigger the diff is, more time is needed for confirmation)
+    local scale_ratio =
+        stats[current.whxy].counter.last_seen > math.floor(source.h / current.h * new_aspect_ratio_timer + .5)
+    local detect_source =
+        current.detect_source and
+        (limit_current > limit_last or stats[current.whxy].counter.last_seen > fast_change_timer)
+    local trusted_offset_y = is_trusted_offset(current.offset_y, "y")
+    local trusted_offset_x = is_trusted_offset(current.offset_x, "x")
+
+    -- Auto adjust black threshold and detect_seconds
+    limit_last = limit_current
+    if current.detect_source and limit_current < options.detect_limit then
+        -- Increase limit
+        detect_seconds = .1
+        if limit_current + limit_step * 2 <= options.detect_limit then
+            limit_current = limit_current + limit_step * 2
+            if stats[current.whxy].counter.last_seen > 2 then
+                limit_step = 2
+            elseif limit_step >= .25 then
+                limit_step = limit_step / 2
+            end
+        else
+            limit_current = options.detect_limit
+        end
+    elseif
+        not invalid and
+            (collected.corrected and stats[collected.whxy].counter.potential > 1 or
+                not collected.corrected and (trusted_offset_y or trusted_offset_x))
+     then
+        -- Stable data, reset limit/step
+        limit_step = 2
+        detect_seconds = options.detect_seconds
+        -- Allow detection of a second brighter crop
+        local timer_reset = new_offset_timer + 1
+        if stats[current.whxy].counter.applied > 0 then
+            timer_reset = fast_change_timer + 1
+        elseif trusted_offset_y and trusted_offset_x then
+            timer_reset = new_aspect_ratio_timer + 1
+        end
+        if stats[current.whxy].counter.last_seen > timer_reset then
+            limit_current = options.detect_limit
+        else
+            limit_current = math.ceil(limit_current)
+        end
+    elseif limit_current > 0 then
+        -- Decrease limit
+        detect_seconds = .1
+        if limit_current - limit_step >= 0 then
+            limit_current = limit_current - limit_step
+        else
+            limit_current = 0
+        end
+    end
+
+    local confirmation =
+        not current.detect_source and
+        (stats[current.whxy].counter.applied > 0 and
+            (stats[current.whxy].counter.last_seen or stats[collected.whxy].counter.potential) > fast_change_timer or
+            scale_ratio)
+    -- Crop Filter:
+    local crop_filter =
+        not invalid and not current.already_apply and trusted_offset_x and trusted_offset_y and
+        (confirmation or detect_source)
+    if crop_filter then
+        -- Apply cropping.
+        stats[current.whxy].counter.applied = stats[current.whxy].counter.applied + 1
+        if not timer.prevent_change or not timer.prevent_change:is_enabled() then
+            mp.command(string.format("no-osd vf pre @%s:lavfi-crop=%s", labels.crop, current.whxy))
+            --print_debug(string.format("- Apply: %s", current.whxy))
+            -- Prevent upcomming change if a timer is defined
+            if options.prevent_change_timer > 0 then
+                if
+                    options.prevent_change_mode == 1 and current.h > applied.h or
+                        options.prevent_change_mode == 2 and current.h < applied.h or
+                        options.prevent_change_mode == 0
+                 then
+                    timer.prevent_change =
+                        mp.add_timeout(
+                        options.prevent_change_timer,
+                        function()
+                        end
+                    )
+                end
+            end
+            copy_meta(current, applied)
+        end
+        if options.mode < 3 then
+            in_progress = false
+            return
+        end
+    end
+
+    -- Cleanup Stats
+    for k in pairs(stats) do
+        local stat_minority =
+            stats[k].counter.last_seen < 0 and stats[k].counter.applied < 1 and stats[k].counter.potential == 0
+        if stat_minority then
+            -- Remove unwanted offset, if any, except 0.
+            for k1, v1 in pairs(trusted_offset.y) do
+                if stats[k].offset_y == v1 and stats[k].offset_y ~= 0 then
+                    table.remove(trusted_offset.y, k1)
+                    break
+                end
+            end
+            -- Remove small detect, that was never applied.
+            stats[k] = nil
+        end
+    end
+    collected = {}
 end
 
 local function auto_crop()
@@ -217,181 +462,7 @@ local function auto_crop()
         time_needed,
         function()
             if collect_metadata() and not (paused or toggled or seeking) then
-                tmp_stats(tmp)
-                local invalid_h = tmp.h < 0
-                local in_margin_y = tmp.y >= 0 and tmp.y <= source.h - tmp.h
-                local bottom_limit_reach = tmp.detect_source and limit_current < limit_last
-
-                -- Debug cropdetect meta
-                --[[ mp.msg.info(
-                    string.format(
-                        "detect_curr=w=%s:h=%s:x=%s:y=%s offsetY:%s limit:%s limit_step:%s",
-                        tmp.w,
-                        tmp.h,
-                        tmp.x,
-                        tmp.y,
-                        tmp.offset_y,
-                        limit_current,
-                        limit_step
-                    )
-                ) ]]
-                -- Store cropping meta, find trusted offset, and correct to closest meta if neccessary.
-                if in_margin_y and not bottom_limit_reach then
-                    -- Store stats
-                    if not stats[tmp.whxy] then
-                        stats[tmp.whxy] = {}
-                        stats[tmp.whxy].counter = {detect = 0, last_seen = 0, correct = 0, applied = 0}
-                        stats[tmp.whxy].offset_y = tmp.offset_y
-                        copy_meta(tmp, stats[tmp.whxy])
-                    end
-                    stats[tmp.whxy].counter.detect = stats[tmp.whxy].counter.detect + 1
-                    if stats[tmp.whxy].counter.last_seen < 0 then
-                        stats[tmp.whxy].counter.last_seen = 0
-                    end
-                    stats[tmp.whxy].counter.last_seen = stats[tmp.whxy].counter.last_seen + 1
-                    local closest = stats[tmp.whxy]
-                    -- Add Trusted Offset
-                    local add_new_offset =
-                        not is_trusted_offset(tmp.offset_y, "y") and
-                        stats[tmp.whxy].counter.last_seen > new_offset_timer
-                    if add_new_offset then
-                        table.insert(trusted_offset.y, stats[tmp.whxy].offset_y)
-                    end
-
-                    -- Meta correction
-                    local margin_correct_h = math.floor(tmp.h * options.correction_pct)
-                    local margin_correct_w = math.floor(tmp.w * options.correction_pct)
-                    for k in pairs(stats) do
-                        if k ~= tmp.whxy then
-                            if stats[k].counter.last_seen > 0 then
-                                stats[k].counter.last_seen = 0
-                            end
-                            stats[k].counter.last_seen = stats[k].counter.last_seen - 1
-                        end
-                        -- Closest metadata
-                        local meta_in_margin_h =
-                            tmp.h >= stats[k].h - margin_correct_h and tmp.h <= stats[k].h + margin_correct_h
-                        local meta_in_margin_w =
-                            tmp.w >= stats[k].w - margin_correct_w and tmp.w <= stats[k].w + margin_correct_w
-                        local maj_detect = stats[k].counter.detect > closest.counter.detect
-                        if meta_in_margin_h and meta_in_margin_w and maj_detect then
-                            closest = stats[k]
-                            closest.whxy = k
-                        end
-                    end
-                    -- Apply correction
-                    if closest and is_trusted_offset(closest.offset_y, "y") and closest.whxy ~= tmp.whxy then
-                        mp.msg.info(string.format("Correct %s to %s.", tmp.whxy, closest.whxy))
-                        copy_meta(closest, tmp)
-                        tmp_stats(tmp)
-                        if stats[tmp.whxy].counter.correct > 2 or tmp.already_apply then
-                            stats[tmp.whxy].counter.correct = 0
-                        else
-                            stats[tmp.whxy].counter.correct = stats[tmp.whxy].counter.correct + 1
-                        end
-                    end
-                end
-
-                -- Scaling on ratio change (bigger the ratio is, more time is needed for confirmation)
-                local confirmation =
-                    not tmp.detect_source and
-                    (stats[tmp.whxy].counter.applied > 0 and
-                        math.max(0, stats[tmp.whxy].counter.last_seen) + stats[tmp.whxy].counter.correct >
-                            fast_change_timer or
-                        stats[tmp.whxy].counter.last_seen > math.floor(source.h / tmp.h * new_aspect_ratio_timer + .5))
-                local detect_source =
-                    tmp.detect_source and
-                    (limit_current > limit_last or stats[tmp.whxy].counter.last_seen > fast_change_timer)
-                local trusted_offset_y = is_trusted_offset(tmp.offset_y, "y")
-                local trusted_offset_x = is_trusted_offset(tmp.offset_x, "x")
-
-                -- Auto adjust black threshold and detect_seconds
-                limit_last = limit_current
-                if tmp.detect_source and limit_current < options.detect_limit then
-                    if limit_current + limit_step * 2 <= options.detect_limit then
-                        limit_current = limit_current + limit_step * 2
-                        if stats[tmp.whxy].counter.last_seen > 2 then
-                            limit_step = 2
-                        elseif limit_step >= .25 then
-                            limit_step = limit_step / 2
-                        end
-                    else
-                        limit_current = options.detect_limit
-                    end
-                    detect_seconds = .1
-                elseif (stats[tmp.whxy].counter.last_seen > 1 or trusted_offset_y) and not invalid_h then
-                    limit_step = 2
-                    -- Allow detection of a second brighter crop
-                    local timer_reset = new_offset_timer + 1
-                    if stats[tmp.whxy].counter.applied > 0 then
-                        timer_reset = fast_change_timer + 1
-                    elseif trusted_offset_y and trusted_offset_x then
-                        timer_reset = new_aspect_ratio_timer + 1
-                    end
-                    if stats[tmp.whxy].counter.last_seen > timer_reset then
-                        limit_current = options.detect_limit
-                    else
-                        limit_current = math.ceil(limit_current)
-                    end
-                    detect_seconds = options.detect_seconds
-                elseif limit_current > 0 then
-                    if limit_current - limit_step >= 0 then
-                        limit_current = limit_current - limit_step
-                    else
-                        limit_current = 0
-                    end
-                    detect_seconds = .1
-                end
-
-                -- Crop Filter:
-                local crop_filter =
-                    not invalid_h and not tmp.already_apply and trusted_offset_x and trusted_offset_y and
-                    (confirmation or detect_source)
-                if crop_filter then
-                    -- Applied cropping.
-                    stats[tmp.whxy].counter.applied = stats[tmp.whxy].counter.applied + 1
-                    if not timer.prevent_change or not timer.prevent_change:is_enabled() then
-                        mp.command(string.format("no-osd vf pre @%s:lavfi-crop=%s", labels.crop, tmp.whxy))
-                        -- Prevent upcomming change if a timer is defined
-                        if options.prevent_change_timer > 0 then
-                            if
-                                options.prevent_change_mode == 1 and tmp.h > applied.h or
-                                    options.prevent_change_mode == 2 and tmp.h < applied.h or
-                                    options.prevent_change_mode == 0
-                             then
-                                timer.prevent_change =
-                                    mp.add_timeout(
-                                    options.prevent_change_timer,
-                                    function()
-                                    end
-                                )
-                            end
-                        end
-                        copy_meta(tmp, applied)
-                    end
-                    if options.mode < 3 then
-                        in_progress = false
-                        return
-                    end
-                end
-
-                -- Cleanup Stats
-                for k in pairs(stats) do
-                    local stat_minority =
-                        stats[k].counter.detect < 20 and stats[k].counter.last_seen < 0 and stats[k].counter.applied < 1
-                    if stat_minority then
-                        -- Remove unwanted offset, if any, except 0.
-                        for k1, v1 in pairs(trusted_offset.y) do
-                            if stats[k].offset_y == v1 and stats[k].offset_y ~= 0 then
-                                table.remove(trusted_offset.y, k1)
-                                break
-                            end
-                        end
-                        -- Remove small detect, that was never applied.
-                        stats[k] = nil
-                    end
-                end
-                tmp = {}
+                process_metadata()
             end
             -- Resume timer
             in_progress = false
@@ -417,7 +488,7 @@ function cleanup()
         remove_filter(value)
     end
     -- Reset some values
-    stats, tmp = {}, {}
+    stats, collected = {}, {}
     limit_current = options.detect_limit
 end
 
@@ -430,10 +501,10 @@ local function init_source()
         x = 0,
         y = 0
     }
-    tmp_stats(source, "whxy")
+    compute_meta(source)
     copy_meta(source, applied)
     stats[source.whxy] = {}
-    stats[source.whxy].counter = {detect = 0, last_seen = 0, correct = 0, applied = 1}
+    stats[source.whxy].counter = {detect = 0, last_seen = 0, applied = 1, potential = 0}
     stats[source.whxy].offset_y = 0
     copy_meta(source, stats[source.whxy])
     trusted_offset.y, trusted_offset.x = {0}, {0}
@@ -511,12 +582,13 @@ local function pause(_, bool)
                 for k in pairs(stats) do
                     mp.msg.info(
                         string.format(
-                            "%s offset_y=%s counter(detect=%s last_seen=%s applied=%s)",
+                            "%s offset_y=%s counter(applied=%s detect=%s last_seen=%s potential=%s)",
                             k,
                             stats[k].offset_y,
+                            stats[k].counter.applied,
                             stats[k].counter.detect,
                             stats[k].counter.last_seen,
-                            stats[k].counter.applied
+                            stats[k].counter.potential
                         )
                     )
                 end
