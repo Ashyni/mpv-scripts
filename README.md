@@ -2,13 +2,11 @@
 
 Base on https://github.com/mpv-player/mpv/blob/master/TOOLS/lua/autocrop.lua.
 
-Script to automatically "crop" in real time top/bottom black bar on Ultra Wide Screen (21:9) or any wider screen (phone).
+Script to automatically "cropping"  hard coded black bars in real time on Ultra Wide Screen (21:9) or any wider screen (phone).
 
 ## Status
 
-It's starting to be really effective.
-<br/>
-Still work in progress, some regressions can occur during process.
+It's now really stable, but can probably be improved for more edge case.
 
 ## Usage
 
@@ -24,17 +22,15 @@ script=/storage/emulated/0/mpv/autocrop.lua
 ## Features
 
 - 5 mode available: 0 disable, 1 on-demand, 2 single-start, 3 auto-manual, 4 auto-start.
-- Support Asymmetric offset on Y axis, based on repeated value, setup by option `new_offset_timer`.
-- New aspect ratio are validate, based on repeated value, setup by option `new_aspect_ratio_timer`.
-- Fast change of already trusted metadata, after the first validation based `new_aspect_ratio_timer`.
-- Correction of random metadata to an already trusted one, without preventing a new offset to be discovered, this mostly help to get a fast aspect ratio change with dark/ambiguous scene (limited to 50% of the source width/height).
+- Support Asymmetric offset.
+- New cropping meta are validate with a known list of aspect ratio and `new_valid_ratio_timer`, then without the list with `new_fallback_timer`.
+- Correction of random metadata to an already trusted one, this mostly help to get a fast aspect ratio change with dark/ambiguous scene.
 - Auto adjust black threshold.
 - Auto pause the script when seeking/loading.
+- Option to prevent change during a certain time (in scene changing back and forth in less than X seconds).
 
 ## To-Do
 
-- Add width_mode, for now only cropping with an offset_x 0 can occurs and depend on the options `new_aspect_ratio_timer`.
-- Add strict_mode, to allow only new aspect ratio of known values (2.39, 2.35, 2, 1.85, 16/9, 4/3, ...).
 - Documentation.
 
 ## OS
