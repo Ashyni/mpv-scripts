@@ -226,10 +226,9 @@ local function process_metadata()
     compute_meta(collected)
     print_debug(nil, "Collected", collected)
     local invalid = not (collected.h > 0 and collected.w > 0)
-    local bottom_limit_reach = collected.detect_source and limit.current < limit.last
     local is_valid_ratio
     -- Store cropping meta, find trusted offset, and correct to closest meta if neccessary.
-    if not bottom_limit_reach then
+    if not (collected.detect_source and limit.change == -1) then
         -- Store stats[whxy]
         if not stats[collected.whxy] then
             stats[collected.whxy] = {counter = {applied = 0, detect = 0, last_seen = 0, potential = 0}}
@@ -331,7 +330,6 @@ local function process_metadata()
         end
     end
 
-    --TODO Filter unnecessary change on max/fullscreen, allow decrease applied crop
     local detect_source =
         current.detect_source and (limit.change == 1 or stats[current.whxy].counter.last_seen > fast_change_timer)
     local trusted_offset_y = is_trusted_offset(current.offset.y, "y")
