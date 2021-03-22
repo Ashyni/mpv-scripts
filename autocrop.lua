@@ -61,7 +61,7 @@ if options.mode == 0 then
 end
 
 -- Forward declaration
-local cleanup
+local cleanup, on_toggle
 -- label
 local label_prefix = mp.get_script_name()
 local labels = {
@@ -70,7 +70,7 @@ local labels = {
 }
 -- state
 local timer = {}
-local in_progress, paused, toggled, seeking, filter_missing
+local in_progress, paused, toggled, seeking, filter_missing, clean_filter
 -- metadata
 local source, applied, stats, trusted_offset, collected, limit = {}, {}, {}, {}, {}, {}
 local units = {"w", "h", "x", "y"}
@@ -172,9 +172,9 @@ local function osd_size_change()
     end
 end
 
-local function print_debug(short, label, meta)
+local function print_debug(type, label, meta)
     if options.debug then
-        if not short then
+        if type == "detail" then
             print(
                 string.format(
                     "%s, w:%s h:%s x:%s y:%s | mt:%s mb:%s ml:%s mr:%s | Offset X:%s Y:%s | limit:%s step:%s change:%s",
@@ -195,7 +195,34 @@ local function print_debug(short, label, meta)
                 )
             )
         else
-            print(short)
+            print(type)
+        end
+    end
+    if type == "stats" then
+        -- Debug Stats
+        if stats[source.whxy] then
+            mp.msg.info("Meta Stats:")
+            local read_maj_offset = {x = "", y = ""}
+            for axis, _ in pairs(read_maj_offset) do
+                for _, v in pairs(trusted_offset[axis]) do
+                    read_maj_offset[axis] = read_maj_offset[axis] .. v .. " "
+                end
+            end
+            mp.msg.info(string.format("Trusted Offset: X:%s Y:%s", read_maj_offset.x, read_maj_offset.y))
+            for k in pairs(stats) do
+                mp.msg.info(
+                    string.format(
+                        "%s | offX=%s offY=%s | applied=%s detect=%s last_seen=%s potential=%s",
+                        k,
+                        stats[k].offset.x,
+                        stats[k].offset.y,
+                        stats[k].counter.applied,
+                        stats[k].counter.detect,
+                        stats[k].counter.last_seen,
+                        stats[k].counter.potential
+                    )
+                )
+            end
         end
     end
 end
@@ -224,7 +251,7 @@ end
 
 local function process_metadata()
     compute_meta(collected)
-    print_debug(nil, "Collected", collected)
+    print_debug("detail", "Collected", collected)
     local invalid = not (collected.h > 0 and collected.w > 0)
     local is_valid_ratio
     -- Store cropping meta, find trusted offset, and correct to closest meta if neccessary.
@@ -311,7 +338,7 @@ local function process_metadata()
     -- Use corrected metadata as main data
     local current = collected
     if current.corrected then
-        print_debug(nil, "\\ Corrected", collected.corrected)
+        print_debug("detail", "\\ Corrected", collected.corrected)
         current = collected.corrected
     end
 
@@ -419,8 +446,7 @@ local function process_metadata()
             compute_meta(applied)
         end
         if options.mode < 3 then
-            in_progress = false
-            return
+            on_toggle(true)
         end
     end
 
@@ -450,6 +476,7 @@ local function auto_crop()
         timer.periodic_timer:stop()
     end
 
+    -- Mode 1/3
     if options.mode % 2 == 1 and toggled == nil then
         toggled = true
         in_progress = false
@@ -479,6 +506,7 @@ local function auto_crop()
 end
 
 function cleanup()
+    print_debug("stats")
     mp.msg.info("Cleanup.")
     -- Kill all timers.
     for index in pairs(timer) do
@@ -516,7 +544,7 @@ local function init_source()
 end
 
 local function seek(name)
-    mp.msg.info(string.format("Stop by %s event.", name))
+    print_debug(string.format("Stop by %s event.", name))
     if timer.periodic_timer and timer.periodic_timer:is_enabled() then
         timer.periodic_timer:kill()
         if timer.crop_detect then
@@ -532,7 +560,7 @@ end
 local function resume(name)
     if timer.periodic_timer and not timer.periodic_timer:is_enabled() and not in_progress then
         timer.periodic_timer:resume()
-        mp.msg.info(string.format("Resumed by %s event.", name))
+        print_debug(string.format("Resumed by %s event.", name))
     end
     local playback_time = mp.get_property_native("playback-time")
     if timer.start_delay and timer.start_delay:is_enabled() and playback_time > options.start_delay then
@@ -546,16 +574,20 @@ local function resume_event()
     seeking = false
 end
 
-local function on_toggle()
+function on_toggle(mode)
     if filter_missing then
         mp.osd_message("Libavfilter cropdetect missing", 3)
         return
     end
-    if is_filter_present(labels.crop) then
+    if is_filter_present(labels.crop) and (clean_filter or options.mode >= 3) then
         remove_filter(labels.crop)
         remove_filter(labels.cropdetect)
         copy_meta(source, applied)
         compute_meta(applied)
+        if options.mode <= 2 then
+            clean_filter = false
+            return
+        end
     end
     if not toggled then
         toggled = true
@@ -570,43 +602,20 @@ local function on_toggle()
         end
         mp.osd_message(string.format("%s resumed.", label_prefix), 3)
     end
+    if mode then
+        clean_filter = true
+    end
 end
 
 local function pause(_, bool)
-    if options.mode > 2 then
-        if bool then
-            paused = true
-            seek("pause")
-            -- Debug Stats
-            if stats[source.whxy] then
-                mp.msg.info("Meta Stats:")
-                local read_maj_offset = {x = "", y = ""}
-                for axis, _ in pairs(read_maj_offset) do
-                    for _, v in pairs(trusted_offset[axis]) do
-                        read_maj_offset[axis] = read_maj_offset[axis] .. v .. " "
-                    end
-                end
-                mp.msg.info(string.format("Trusted Offset: X:%s Y:%s", read_maj_offset.x, read_maj_offset.y))
-                for k in pairs(stats) do
-                    mp.msg.info(
-                        string.format(
-                            "%s | offX=%s offY=%s | applied=%s detect=%s last_seen=%s potential=%s",
-                            k,
-                            stats[k].offset.x,
-                            stats[k].offset.y,
-                            stats[k].counter.applied,
-                            stats[k].counter.detect,
-                            stats[k].counter.last_seen,
-                            stats[k].counter.potential
-                        )
-                    )
-                end
-            end
-        else
-            paused = false
-            if not toggled then
-                resume("unpause")
-            end
+    if bool then
+        paused = true
+        seek("pause")
+        print_debug("stats")
+    else
+        paused = false
+        if not toggled then
+            resume("unpause")
         end
     end
 end
