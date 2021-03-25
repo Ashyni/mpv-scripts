@@ -42,7 +42,8 @@ local options = {
     detect_limit = 24,
     detect_round = 2,
     detect_seconds = 0.45,
-    -- debug
+    detect_reset = 1,
+    -- verbose
     debug = false
 }
 read_options(options)
@@ -112,10 +113,11 @@ local function insert_crop_filter()
         local insert_crop_filter_command =
             mp.command(
             string.format(
-                "no-osd vf pre @%s:lavfi-cropdetect=limit=%.3f/255:round=%d:reset=0",
+                "no-osd vf pre @%s:lavfi-cropdetect=limit=%.3f/255:round=%d:reset=%d",
                 labels.cropdetect,
                 limit.current,
-                options.detect_round
+                options.detect_round,
+                options.detect_reset
             )
         )
         if not insert_crop_filter_command then
