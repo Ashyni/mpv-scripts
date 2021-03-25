@@ -356,8 +356,9 @@ local function process_metadata()
     limit.last = limit.current
     if current.detect_source then
         -- Increase limit
-        limit.change, detect_seconds = 1, .1
+        limit.change = 1
         if limit.current < options.detect_limit then
+            detect_seconds = .1
             if limit.current + limit.step * 2 <= options.detect_limit then
                 limit.current = limit.current + limit.step * 2
                 if stats[current.whxy].counter.last_seen > 2 then
