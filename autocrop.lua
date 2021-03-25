@@ -18,35 +18,27 @@ mode: [0-4] - 0 disable, 1 on-demand, 2 single-start, 3 auto-manual, 4 auto-star
 
 start_delay: seconds - Delay use by mode = 2 (single-start), to skip intro.
 
-prevent_change_mode: [0-2] 0 any, 1 up, 2 down - The prevent_change_timer is trigger after a change,
+prevent_change_mode: [0-2] 0 any, 1 keep-largest, 2 keep-lowest - The prevent_change_timer is trigger after a change,
     set prevent_change_timer to 0, to disable this.
 
-detect_limit: number[0-255] - Black threshold for cropdetect.
-    Smaller values will generally result in less cropping.
-    See limit of https://ffmpeg.org/ffmpeg-filters.html#cropdetect
-
-detect_round: number[2^n] -  The value which the width/height should be divisible by 2. Smaller values
-    have better detection accuracy. If you have problems with other filters, you can try to set it to 4 or 16.
-    See round of https://ffmpeg.org/ffmpeg-filters.html#cropdetect
-
-detect_seconds: seconds - How long to gather cropdetect data.
-    Increasing this may be desirable to allow cropdetect more time to collect data.
+detect_limit, detect_round, detect_seconds: See https://ffmpeg.org/ffmpeg-filters.html#cropdetect
+    other option for this filter: skip (new 12/2020), reset
 ]]
 require "mp.msg"
 require "mp.options"
 
 local options = {
-    -- crop behavior
+    -- behavior
     mode = 4,
     start_delay = 0,
     prevent_change_timer = 0,
     prevent_change_mode = 2,
+    resize_windowed = true,
     fast_change_timer = 2,
     new_valid_ratio_timer = 6,
     new_fallback_timer = 18,
-    resize_windowed = true,
     ratios = {2.39, 2.35, 2.2, 2, 1.85, 16 / 9, 4 / 3, 9 / 16},
-    -- crop detect
+    -- ffmpeg-filter
     detect_limit = 24,
     detect_round = 2,
     detect_seconds = 0.45,
@@ -69,7 +61,7 @@ local labels = {
     cropdetect = string.format("%s-cropdetect", label_prefix)
 }
 -- state
-local timer = {}
+local timers = {}
 local in_progress, paused, toggled, seeking, filter_missing, clean_filter
 -- metadata
 local source, applied, stats, trusted_offset, collected, limit = {}, {}, {}, {}, {}, {}
@@ -177,12 +169,9 @@ local function print_debug(type, label, meta)
         if type == "detail" then
             print(
                 string.format(
-                    "%s, w:%s h:%s x:%s y:%s | mt:%s mb:%s ml:%s mr:%s | Offset X:%s Y:%s | limit:%s step:%s change:%s",
+                    "%s, %s | mt:%s mb:%s ml:%s mr:%s | Offset X:%s Y:%s | limit:%s step:%s change:%s",
                     label,
-                    meta.w,
-                    meta.h,
-                    meta.x,
-                    meta.y,
+                    meta.whxy,
                     meta.mt,
                     meta.mb,
                     meta.ml,
@@ -209,17 +198,17 @@ local function print_debug(type, label, meta)
                 end
             end
             mp.msg.info(string.format("Trusted Offset: X:%s Y:%s", read_maj_offset.x, read_maj_offset.y))
-            for k in pairs(stats) do
+            for whxy in pairs(stats) do
                 mp.msg.info(
                     string.format(
                         "%s | offX=%s offY=%s | applied=%s detect=%s last_seen=%s potential=%s",
-                        k,
-                        stats[k].offset.x,
-                        stats[k].offset.y,
-                        stats[k].counter.applied,
-                        stats[k].counter.detect,
-                        stats[k].counter.last_seen,
-                        stats[k].counter.potential
+                        whxy,
+                        stats[whxy].offset.x,
+                        stats[whxy].offset.y,
+                        stats[whxy].counter.applied,
+                        stats[whxy].counter.detect,
+                        stats[whxy].counter.last_seen,
+                        stats[whxy].counter.potential
                     )
                 )
             end
@@ -322,9 +311,8 @@ local function process_metadata()
                 --print_debug(string.format("\\ Find %s", closest.whxy))
                 end
             end
-            -- Check if the corrected data already exist/applied or flush it
+            -- Check if the corrected data is already applied or flush it
             if closest.whxy ~= applied.whxy then
-                -- Correct
                 copy_meta(collected, collected.corrected)
                 collected.corrected.w, collected.corrected.h = stats[closest.whxy].w, stats[closest.whxy].h
                 collected.corrected.x, collected.corrected.y = stats[closest.whxy].x, stats[closest.whxy].y
@@ -366,8 +354,7 @@ local function process_metadata()
     limit.last = limit.current
     if current.detect_source then
         -- Increase limit
-        limit.change = 1
-        detect_seconds = .1
+        limit.change, detect_seconds = 1, .1
         if limit.current < options.detect_limit then
             if limit.current + limit.step * 2 <= options.detect_limit then
                 limit.current = limit.current + limit.step * 2
@@ -386,9 +373,7 @@ local function process_metadata()
                 not collected.corrected and (trusted_offset_y or trusted_offset_x))
      then
         -- Stable data, reset limit/step
-        limit.change = 0
-        limit.step = 2
-        detect_seconds = options.detect_seconds
+        limit.change, limit.step, detect_seconds = 0, 2, options.detect_seconds
         -- Allow detection of a second brighter crop
         local timer_reset = new_fallback_timer + 1
         if stats[current.whxy].counter.applied > 0 then
@@ -403,8 +388,7 @@ local function process_metadata()
         end
     elseif limit.current > 0 then
         -- Decrease limit
-        limit.change = -1
-        detect_seconds = .1
+        limit.change, detect_seconds = -1, .1
         if limit.current - limit.step >= 0 then
             limit.current = limit.current - limit.step
         else
@@ -412,35 +396,34 @@ local function process_metadata()
         end
     end
 
+    -- Crop Filter
     local confirmation =
         not current.detect_source and
         (stats[current.whxy].counter.applied > 0 and stats[current.whxy].counter.last_seen > fast_change_timer or
             stats[current.whxy].counter.last_seen > new_valid_ratio_timer and is_valid_ratio or
             stats[current.whxy].counter.last_seen > new_fallback_timer)
-    -- Crop Filter:
     local crop_filter =
         not invalid and not current.already_apply and trusted_offset_x and trusted_offset_y and
         (confirmation or detect_source)
     if crop_filter then
-        -- Apply cropping.
+        -- Apply cropping
         stats[current.whxy].counter.applied = stats[current.whxy].counter.applied + 1
-        if not timer.prevent_change or not timer.prevent_change:is_enabled() then
+        if not timers.prevent_change or not timers.prevent_change:is_enabled() then
             mp.command(string.format("no-osd vf pre @%s:lavfi-crop=%s", labels.crop, current.whxy))
             print_debug(string.format("- Apply: %s", current.whxy))
-            -- Prevent upcomming change if a timer is defined
-            if options.prevent_change_timer > 0 then
-                if
-                    options.prevent_change_mode == 1 and current.h > applied.h or
-                        options.prevent_change_mode == 2 and current.h < applied.h or
-                        options.prevent_change_mode == 0
-                 then
-                    timer.prevent_change =
-                        mp.add_timeout(
-                        options.prevent_change_timer,
-                        function()
-                        end
-                    )
-                end
+            -- Prevent upcomming change if a timers is defined
+            if
+                options.prevent_change_timer > 0 and
+                    (options.prevent_change_mode == 1 and (current.w > applied.w or current.h > applied.h) or
+                        options.prevent_change_mode == 2 and (current.w < applied.w or current.h < applied.h) or
+                        options.prevent_change_mode == 0)
+             then
+                timers.prevent_change =
+                    mp.add_timeout(
+                    options.prevent_change_timer,
+                    function()
+                    end
+                )
             end
             copy_meta(current, applied)
             compute_meta(applied)
@@ -455,14 +438,20 @@ local function process_metadata()
         local stat_minority =
             stats[whxy].counter.last_seen < 0 and stats[whxy].counter.applied < 1 and stats[whxy].counter.potential == 0
         if stat_minority then
-            -- Remove unwanted offset, if any, except 0.
-            for k1, v1 in pairs(trusted_offset.y) do
-                if stats[whxy].offset.y == v1 and stats[whxy].offset.y ~= 0 then
-                    table.remove(trusted_offset.y, k1)
+            -- Remove unwanted offset, if any, except 0
+            for i_x, offset_x in pairs(trusted_offset.x) do
+                if stats[whxy].offset.x == offset_x and stats[whxy].offset.x ~= 0 then
+                    table.remove(trusted_offset.x, i_x)
                     break
                 end
             end
-            -- Remove small detect, that was never applied.
+            for i_y, offset_y in pairs(trusted_offset.y) do
+                if stats[whxy].offset.y == offset_y and stats[whxy].offset.y ~= 0 then
+                    table.remove(trusted_offset.y, i_y)
+                    break
+                end
+            end
+            -- Remove small detect, that was never applied
             stats[whxy] = nil
         end
     end
@@ -470,10 +459,10 @@ local function process_metadata()
 end
 
 local function auto_crop()
-    -- Pause timer
+    -- Pause timers
     in_progress = true
-    if timer.periodic_timer then
-        timer.periodic_timer:stop()
+    if timers.periodic_timer then
+        timers.periodic_timer:stop()
     end
 
     -- Mode 1/3
@@ -488,18 +477,18 @@ local function auto_crop()
     end
 
     local time_needed = detect_seconds
-    -- Wait to gather data.
-    timer.crop_detect =
+    -- Wait to gather data
+    timers.crop_detect =
         mp.add_timeout(
         time_needed,
         function()
             if collect_metadata() and not (paused or toggled or seeking) then
                 process_metadata()
             end
-            -- Resume timer
+            -- Resume timers
             in_progress = false
-            if timer.periodic_timer and not paused and not toggled then
-                timer.periodic_timer:resume()
+            if timers.periodic_timer and not paused and not toggled then
+                timers.periodic_timer:resume()
             end
         end
     )
@@ -508,15 +497,15 @@ end
 function cleanup()
     print_debug("stats")
     mp.msg.info("Cleanup.")
-    -- Kill all timers.
-    for index in pairs(timer) do
-        if timer[index]:is_enabled() then
-            timer[index]:kill()
+    -- Kill all timers
+    for index in pairs(timers) do
+        if timers[index]:is_enabled() then
+            timers[index]:kill()
         end
     end
-    -- Remove all timers.
-    timer = {}
-    -- Remove all existing filters.
+    -- Remove all timers
+    timers = {}
+    -- Remove all existing filters
     for _, value in pairs(labels) do
         remove_filter(value)
     end
@@ -537,7 +526,7 @@ local function init_source()
     compute_meta(source)
     copy_meta(source, applied)
     compute_meta(applied)
-    stats[source.whxy] = {counter = {detect = 0, last_seen = 0, applied = 1, potential = 0}}
+    stats[source.whxy] = {counter = {applied = 1, detect = 0, last_seen = 0, potential = 0}}
     copy_meta(source, stats[source.whxy])
     compute_meta(stats[source.whxy])
     trusted_offset.y, trusted_offset.x = {0}, {0}
@@ -545,10 +534,10 @@ end
 
 local function seek(name)
     print_debug(string.format("Stop by %s event.", name))
-    if timer.periodic_timer and timer.periodic_timer:is_enabled() then
-        timer.periodic_timer:kill()
-        if timer.crop_detect then
-            timer.crop_detect = nil
+    if timers.periodic_timer and timers.periodic_timer:is_enabled() then
+        timers.periodic_timer:kill()
+        if timers.crop_detect then
+            timers.crop_detect = nil
         end
     end
 end
@@ -558,15 +547,15 @@ local function seek_event()
 end
 
 local function resume(name)
-    if timer.periodic_timer and not timer.periodic_timer:is_enabled() and not in_progress then
-        timer.periodic_timer:resume()
+    if timers.periodic_timer and not timers.periodic_timer:is_enabled() and not in_progress then
+        timers.periodic_timer:resume()
         print_debug(string.format("Resumed by %s event.", name))
     end
     local playback_time = mp.get_property_native("playback-time")
-    if timer.start_delay and timer.start_delay:is_enabled() and playback_time > options.start_delay then
-        timer.start_delay.timeout = 0
-        timer.start_delay:kill()
-        timer.start_delay:resume()
+    if timers.start_delay and timers.start_delay:is_enabled() and playback_time > options.start_delay then
+        timers.start_delay.timeout = 0
+        timers.start_delay:kill()
+        timers.start_delay:resume()
     end
 end
 
@@ -638,11 +627,11 @@ local function on_start()
         start_delay = options.start_delay
     end
 
-    timer.start_delay =
+    timers.start_delay =
         mp.add_timeout(
         start_delay,
         function()
-            timer.periodic_timer = mp.add_periodic_timer(0, auto_crop)
+            timers.periodic_timer = mp.add_periodic_timer(0, auto_crop)
         end
     )
 end
