@@ -109,7 +109,7 @@ end
 
 local function insert_crop_filter()
     if not is_filter_present(labels.cropdetect) then
-        -- "vf pre" use source size and "vf add" use crop size as comparison for offset math.
+        -- "vf pre" cropdetect / "vf append" crop, to be sure of the order of the chain filters
         local insert_crop_filter_command =
             mp.command(
             string.format(
@@ -221,9 +221,9 @@ end
 local function collect_metadata()
     local cropdetect_metadata = mp.get_property_native(string.format("vf-metadata/%s", labels.cropdetect))
     if cropdetect_metadata and cropdetect_metadata["lavfi.cropdetect.w"] then
-        -- Remove filter to reset detection.
+        -- Remove filter to clear vf-metadata
         remove_filter(labels.cropdetect)
-        -- Make metadata usable.
+        -- Make metadata usable
         collected = {
             w = tonumber(cropdetect_metadata["lavfi.cropdetect.w"]),
             h = tonumber(cropdetect_metadata["lavfi.cropdetect.h"]),
@@ -245,7 +245,7 @@ local function process_metadata()
     print_debug("detail", "Collected", collected)
     local invalid = not (collected.h > 0 and collected.w > 0)
     local is_valid_ratio
-    -- Store cropping meta, find trusted offset, and correct to closest meta if neccessary.
+    -- Store cropping meta, find trusted offset, and correct to closest meta if neccessary
     if not (collected.detect_source and limit.change == -1) then
         -- Store stats[whxy]
         if not stats[collected.whxy] then
@@ -289,7 +289,7 @@ local function process_metadata()
         -- Meta correction
         if
             not invalid and stats[collected.whxy].counter.applied == 0 and
-                (collected.w > source.w * 0.5 or collected.h > source.h * 0.5)
+                (collected.w > source.w * 0.6 or collected.h > source.h * 0.6)
          then
             collected.corrected = {}
             -- Find closest margin already trusted
@@ -412,7 +412,7 @@ local function process_metadata()
         -- Apply cropping
         stats[current.whxy].counter.applied = stats[current.whxy].counter.applied + 1
         if not timers.prevent_change or not timers.prevent_change:is_enabled() then
-            mp.command(string.format("no-osd vf pre @%s:lavfi-crop=%s", labels.crop, current.whxy))
+            mp.command(string.format("no-osd vf append @%s:lavfi-crop=%s", labels.crop, current.whxy))
             print_debug(string.format("- Apply: %s", current.whxy))
             -- Prevent upcomming change if a timers is defined
             if
