@@ -21,6 +21,8 @@ start_delay: seconds - Delay use by mode = 2 (single-start), to skip intro.
 prevent_change_mode: [0-2] 0 any, 1 keep-largest, 2 keep-lowest - The prevent_change_timer is trigger after a change,
     set prevent_change_timer to 0, to disable this.
 
+deviation: [0-N] number of collected meta that can deviate to approved a new meta (default to validate: 12/12+3).
+
 detect_limit, detect_round, detect_seconds: See https://ffmpeg.org/ffmpeg-filters.html#cropdetect
     other option for this filter: skip (new 12/2020), reset
 ]]
@@ -35,9 +37,11 @@ local options = {
     prevent_change_mode = 2,
     resize_windowed = true,
     fast_change_timer = 2,
-    new_valid_ratio_timer = 6,
+    new_known_ratio_timer = 6,
     new_fallback_timer = 18,
     ratios = {2.39, 2.35, 2.2, 2, 1.85, 16 / 9, 4 / 3, 9 / 16},
+    deviation = 3,
+    correction = 0.6,
     -- ffmpeg-filter
     detect_limit = 24,
     detect_round = 2,
@@ -63,14 +67,14 @@ local labels = {
 }
 -- state
 local timers = {}
-local in_progress, paused, toggled, seeking, filter_missing, clean_filter
+local in_progress, paused, toggled, seeking, filter_missing, filter_removed
 -- metadata
-local source, applied, stats, trusted_offset, collected, limit = {}, {}, {}, {}, {}, {}
+local source, buffer, applied, stats, trusted_offset, collected, limit = {}, {}, {}, {}, {}, {}, {}
 local units = {"w", "h", "x", "y"}
 -- option
 local detect_seconds = options.detect_seconds
 local new_fallback_timer = math.ceil(options.new_fallback_timer / (detect_seconds + .05))
-local new_valid_ratio_timer = math.ceil(options.new_valid_ratio_timer / (detect_seconds + .05))
+local new_known_ratio_timer = math.ceil(options.new_known_ratio_timer / (detect_seconds + .05))
 local fast_change_timer = math.ceil(options.fast_change_timer / (detect_seconds + .05))
 limit.current = options.detect_limit
 limit.last = options.detect_limit
@@ -136,15 +140,20 @@ local function remove_filter(label)
     end
 end
 
+local function cycle_buffer(meta)
+    table.insert(buffer, meta)
+    buffer.size = buffer.size + 1
+    if buffer.size > new_fallback_timer + options.deviation then
+        table.remove(buffer, 1)
+        buffer.size = buffer.size - 1
+    end
+end
+
 local function compute_meta(meta)
     meta.whxy = string.format("w=%s:h=%s:x=%s:y=%s", meta.w, meta.h, meta.x, meta.y)
     meta.detect_source = meta.whxy == source.whxy
     meta.already_apply = meta.whxy == applied.whxy
     meta.offset = {x = meta.x - (source.w - meta.w) / 2, y = meta.y - (source.h - meta.h) / 2}
-    meta.mt = meta.y
-    meta.mb = source.h - meta.h - meta.y
-    meta.ml = meta.x
-    meta.mr = source.w - meta.w - meta.x
 end
 
 local function osd_size_change()
@@ -171,13 +180,9 @@ local function print_debug(type, label, meta)
         if type == "detail" then
             print(
                 string.format(
-                    "%s, %s | mt:%s mb:%s ml:%s mr:%s | Offset X:%s Y:%s | limit:%s step:%s change:%s",
+                    "%s, %s | Offset X:%s Y:%s | limit:%s step:%s change:%s",
                     label,
                     meta.whxy,
-                    meta.mt,
-                    meta.mb,
-                    meta.ml,
-                    meta.mr,
                     meta.offset.x,
                     meta.offset.y,
                     limit.current,
@@ -201,18 +206,31 @@ local function print_debug(type, label, meta)
             end
             mp.msg.info(string.format("Trusted Offset: X:%s Y:%s", read_maj_offset.x, read_maj_offset.y))
             for whxy in pairs(stats) do
-                mp.msg.info(
-                    string.format(
-                        "%s | offX=%s offY=%s | applied=%s detect=%s last_seen=%s potential=%s",
-                        whxy,
-                        stats[whxy].offset.x,
-                        stats[whxy].offset.y,
-                        stats[whxy].counter.applied,
-                        stats[whxy].counter.detect,
-                        stats[whxy].counter.last_seen,
-                        stats[whxy].counter.potential
+                if stats[whxy].applied > 0 then
+                    mp.msg.info(
+                        string.format(
+                            "%s | offX=%s offY=%s | applied=%s detected=%s last=%s",
+                            whxy,
+                            stats[whxy].offset.x,
+                            stats[whxy].offset.y,
+                            stats[whxy].applied,
+                            stats[whxy].detected,
+                            stats[whxy].last_seen
+                        )
                     )
-                )
+                elseif options.debug then
+                    mp.msg.info(
+                        string.format(
+                            "- %s | offX=%s offY=%s | potential=%s fallback=%s known_ratio=%s",
+                            whxy,
+                            stats[whxy].offset.x,
+                            stats[whxy].offset.y,
+                            stats[whxy].potential,
+                            stats[whxy].fallback_detected,
+                            stats[whxy].known_ratio_detected
+                        )
+                    )
+                end
             end
         end
     end
@@ -244,43 +262,83 @@ local function process_metadata()
     compute_meta(collected)
     print_debug("detail", "Collected", collected)
     local invalid = not (collected.h > 0 and collected.w > 0)
-    local is_valid_ratio
+    local new_ready
     -- Store cropping meta, find trusted offset, and correct to closest meta if neccessary
     if not (collected.detect_source and limit.change == -1) then
-        -- Store stats[whxy]
+        cycle_buffer(collected.whxy)
+        -- Init stats[whxy]
         if not stats[collected.whxy] then
-            stats[collected.whxy] = {counter = {applied = 0, detect = 0, last_seen = 0, potential = 0}}
+            stats[collected.whxy] = {
+                applied = 0,
+                detected = 0,
+                last_seen = 0,
+                potential = 0,
+                fallback_detected = 0,
+                known_ratio_detected = 0
+            }
             copy_meta(collected, stats[collected.whxy])
             compute_meta(stats[collected.whxy])
-        end
-        stats[collected.whxy].counter.detect = stats[collected.whxy].counter.detect + 1
-        -- Cycle potential
-        stats[collected.whxy].counter.potential = stats[collected.whxy].counter.potential + 1
-        if stats[collected.whxy].counter.applied > 0 then
-            stats[collected.whxy].counter.potential = 0
-        end
-        for whxy in pairs(stats) do
-            if whxy ~= collected.whxy and stats[whxy].counter.potential then
-                if stats[whxy].counter.potential > 0 then
-                    stats[whxy].counter.potential = 0
+            -- Check aspect ratio
+            for _, ratio in pairs(options.ratios) do
+                if collected.h == math.floor(collected.w / ratio) or collected.h == math.ceil(collected.w / ratio) then
+                    stats[collected.whxy].is_known_ratio = true
                 end
             end
         end
 
-        -- Check aspect ratio
-        for _, ratio in pairs(options.ratios) do
-            if collected.h == math.floor(collected.w / ratio) or collected.h == math.ceil(collected.w / ratio) then
-                is_valid_ratio = true
+        -- Increase
+        stats[collected.whxy].detected = stats[collected.whxy].detected + 1
+        if stats[collected.whxy].applied == 0 then
+            if stats[collected.whxy].potential < 0 then
+                stats[collected.whxy].potential = 0
+            end
+            stats[collected.whxy].potential = stats[collected.whxy].potential + 1
+            stats[collected.whxy].fallback_detected = stats[collected.whxy].fallback_detected + 1
+            if stats[collected.whxy].is_known_ratio then
+                stats[collected.whxy].known_ratio_detected = stats[collected.whxy].known_ratio_detected + 1
+            end
+        else
+            stats[collected.whxy].potential = nil
+            stats[collected.whxy].known_ratio_detected = nil
+            stats[collected.whxy].fallback_detected = nil
+        end
+
+        -- Cycle potential
+        for whxy in pairs(stats) do
+            if stats[whxy].applied == 0 and whxy ~= collected.whxy then
+                if stats[whxy].potential > 0 then
+                    stats[whxy].potential = 0
+                end
+                stats[whxy].potential = stats[whxy].potential - 1
             end
         end
+
+        -- Decrease known_ratio_detected
+        if buffer.size > (new_known_ratio_timer + options.deviation) then
+            local pos = buffer.size - (new_known_ratio_timer + options.deviation)
+            if stats[buffer[pos]].applied == 0 and stats[collected.whxy].is_known_ratio then
+                stats[buffer[pos]].known_ratio_detected = stats[buffer[pos]].known_ratio_detected - 1
+            end
+        end
+        -- Decrease fallback_detected
+        if buffer.size == new_fallback_timer + options.deviation and stats[buffer[1]].applied == 0 then
+            stats[buffer[1]].fallback_detected = stats[buffer[1]].fallback_detected - 1
+            -- Cleanup stats no longer in the buffer
+            if stats[buffer[1]].fallback_detected == 0 then
+                stats[buffer[1]] = nil
+            end
+        end
+
+        -- Check if a new meta can be approved
+        new_ready =
+            stats[collected.whxy].applied == 0 and
+            (stats[collected.whxy].known_ratio_detected >= new_known_ratio_timer or
+                stats[collected.whxy].fallback_detected >= new_fallback_timer)
 
         -- Add Trusted Offset
         local add_new_offset = {}
         for _, axis in pairs({"x", "y"}) do
-            add_new_offset[axis] =
-                not invalid and not is_trusted_offset(collected.offset[axis], axis) and
-                (stats[collected.whxy].counter.potential > new_valid_ratio_timer and is_valid_ratio or
-                    stats[collected.whxy].counter.potential > new_fallback_timer)
+            add_new_offset[axis] = not invalid and not is_trusted_offset(collected.offset[axis], axis) and new_ready
             if add_new_offset[axis] then
                 table.insert(trusted_offset[axis], stats[collected.whxy].offset[axis])
             end
@@ -288,29 +346,25 @@ local function process_metadata()
 
         -- Meta correction
         if
-            not invalid and stats[collected.whxy].counter.applied == 0 and
-                (collected.w > source.w * 0.6 or collected.h > source.h * 0.6)
+            not invalid and stats[collected.whxy].applied == 0 and
+                (collected.w > source.w * options.correction or collected.h > source.h * options.correction)
          then
             collected.corrected = {}
-            -- Find closest margin already trusted
+            -- Find closest meta already applied
             local closest = {}
             for whxy in pairs(stats) do
                 local diff = {}
-                for _, margin in pairs({"mt", "mb", "ml", "mr"}) do
-                    diff[margin] =
-                        math.max(collected[margin], stats[whxy][margin]) -
-                        math.min(collected[margin], stats[whxy][margin])
-                end
-                --print_debug(string.format("\\ Search %s | %s %s %s %s", whxy, diff.mt, diff.mb, diff.ml, diff.mr))
-                if
-                    stats[whxy].counter.applied > 0 and
-                        (not closest.whxy or
-                            diff.mt <= closest.mt and diff.mb <= closest.mb and diff.ml <= closest.ml and
-                                diff.mr <= closest.mr)
-                 then
-                    closest.mt, closest.mb, closest.ml, closest.mr = diff.mt, diff.mb, diff.ml, diff.mr
-                    closest.whxy = whxy
-                --print_debug(string.format("\\ Find %s", closest.whxy))
+                if stats[whxy].applied > 0 then
+                    for _, axis in pairs({"x", "y"}) do
+                        diff[axis] =
+                            math.max(collected[axis], stats[whxy][axis]) - math.min(collected[axis], stats[whxy][axis])
+                    end
+                    --print_debug(string.format("\\ Search %s | %s %s", whxy, diff.x, diff.y))
+                    if not closest.whxy or diff.x <= closest.x and diff.y <= closest.y then
+                        closest.x, closest.y = diff.x, diff.y
+                        closest.whxy = whxy
+                    --print_debug(string.format("  \\ Find %s", closest.whxy))
+                    end
                 end
             end
             -- Check if the corrected data is already applied or flush it
@@ -335,20 +389,20 @@ local function process_metadata()
     -- Cycle last_seen
     for whxy in pairs(stats) do
         if whxy ~= current.whxy then
-            if stats[whxy].counter.last_seen > 0 then
-                stats[whxy].counter.last_seen = 0
+            if stats[whxy].last_seen > 0 then
+                stats[whxy].last_seen = 0
             end
-            stats[whxy].counter.last_seen = stats[whxy].counter.last_seen - 1
+            stats[whxy].last_seen = stats[whxy].last_seen - 1
         else
-            if stats[whxy].counter.last_seen < 0 then
-                stats[whxy].counter.last_seen = 0
+            if stats[whxy].last_seen < 0 then
+                stats[whxy].last_seen = 0
             end
-            stats[whxy].counter.last_seen = stats[whxy].counter.last_seen + 1
+            stats[whxy].last_seen = stats[whxy].last_seen + 1
         end
     end
 
     local detect_source =
-        current.detect_source and (limit.change == 1 or stats[current.whxy].counter.last_seen > fast_change_timer)
+        current.detect_source and (limit.change == 1 or stats[current.whxy].last_seen > fast_change_timer)
     local trusted_offset_y = is_trusted_offset(current.offset.y, "y")
     local trusted_offset_x = is_trusted_offset(current.offset.x, "x")
 
@@ -361,7 +415,7 @@ local function process_metadata()
             detect_seconds = .1
             if limit.current + limit.step * 2 <= options.detect_limit then
                 limit.current = limit.current + limit.step * 2
-                if stats[current.whxy].counter.last_seen > 2 then
+                if stats[current.whxy].last_seen > 2 then
                     limit.step = 2
                 elseif limit.step >= .25 then
                     limit.step = limit.step / 2
@@ -372,19 +426,19 @@ local function process_metadata()
         end
     elseif
         not invalid and
-            (collected.corrected and stats[collected.whxy].counter.potential > 1 or
+            (collected.corrected and stats[collected.whxy].potential > 1 or
                 not collected.corrected and (trusted_offset_y or trusted_offset_x))
      then
         -- Stable data, reset limit/step
         limit.change, limit.step, detect_seconds = 0, 2, options.detect_seconds
         -- Allow detection of a second brighter crop
         local timer_reset = new_fallback_timer + 1
-        if stats[current.whxy].counter.applied > 0 then
+        if stats[current.whxy].applied > 0 then
             timer_reset = fast_change_timer + 1
         elseif trusted_offset_y and trusted_offset_x then
-            timer_reset = new_valid_ratio_timer + 1
+            timer_reset = new_known_ratio_timer + 1
         end
-        if stats[current.whxy].counter.last_seen > timer_reset then
+        if stats[current.whxy].last_seen > timer_reset then
             limit.current = options.detect_limit
         else
             limit.current = math.ceil(limit.current)
@@ -402,15 +456,13 @@ local function process_metadata()
     -- Crop Filter
     local confirmation =
         not current.detect_source and
-        (stats[current.whxy].counter.applied > 0 and stats[current.whxy].counter.last_seen > fast_change_timer or
-            stats[current.whxy].counter.last_seen > new_valid_ratio_timer and is_valid_ratio or
-            stats[current.whxy].counter.last_seen > new_fallback_timer)
+        (stats[current.whxy].applied > 0 and stats[current.whxy].last_seen >= fast_change_timer or new_ready)
     local crop_filter =
         not invalid and not current.already_apply and trusted_offset_x and trusted_offset_y and
         (confirmation or detect_source)
     if crop_filter then
         -- Apply cropping
-        stats[current.whxy].counter.applied = stats[current.whxy].counter.applied + 1
+        stats[current.whxy].applied = stats[current.whxy].applied + 1
         if not timers.prevent_change or not timers.prevent_change:is_enabled() then
             mp.command(string.format("no-osd vf append @%s:lavfi-crop=%s", labels.crop, current.whxy))
             print_debug(string.format("- Apply: %s", current.whxy))
@@ -433,29 +485,6 @@ local function process_metadata()
         end
         if options.mode < 3 then
             on_toggle(true)
-        end
-    end
-
-    -- Cleanup Stats
-    for whxy in pairs(stats) do
-        local stat_minority =
-            stats[whxy].counter.last_seen < 0 and stats[whxy].counter.applied < 1 and stats[whxy].counter.potential == 0
-        if stat_minority then
-            -- Remove unwanted offset, if any, except 0
-            for i_x, offset_x in pairs(trusted_offset.x) do
-                if stats[whxy].offset.x == offset_x and stats[whxy].offset.x ~= 0 then
-                    table.remove(trusted_offset.x, i_x)
-                    break
-                end
-            end
-            for i_y, offset_y in pairs(trusted_offset.y) do
-                if stats[whxy].offset.y == offset_y and stats[whxy].offset.y ~= 0 then
-                    table.remove(trusted_offset.y, i_y)
-                    break
-                end
-            end
-            -- Remove small detect, that was never applied
-            stats[whxy] = nil
         end
     end
     collected = {}
@@ -506,14 +535,13 @@ function cleanup()
             timers[index]:kill()
         end
     end
-    -- Remove all timers
+    -- Remove all timers, existing filters
     timers = {}
-    -- Remove all existing filters
-    for _, value in pairs(labels) do
-        remove_filter(value)
+    for _, label in pairs(labels) do
+        remove_filter(label)
     end
     -- Reset some values
-    stats, collected = {}, {}
+    buffer, stats, collected = {}, {}, {}
     limit.current = options.detect_limit
 end
 
@@ -529,7 +557,7 @@ local function init_source()
     compute_meta(source)
     copy_meta(source, applied)
     compute_meta(applied)
-    stats[source.whxy] = {counter = {applied = 1, detect = 0, last_seen = 0, potential = 0}}
+    stats[source.whxy] = {applied = 1, detected = 0, last_seen = 0}
     copy_meta(source, stats[source.whxy])
     compute_meta(stats[source.whxy])
     trusted_offset.y, trusted_offset.x = {0}, {0}
@@ -571,13 +599,13 @@ function on_toggle(mode)
         mp.osd_message("Libavfilter cropdetect missing", 3)
         return
     end
-    if is_filter_present(labels.crop) and (clean_filter or options.mode >= 3) then
+    if is_filter_present(labels.crop) and (filter_removed or options.mode >= 3) then
         remove_filter(labels.crop)
         remove_filter(labels.cropdetect)
         copy_meta(source, applied)
         compute_meta(applied)
         if options.mode <= 2 then
-            clean_filter = false
+            filter_removed = false
             return
         end
     end
@@ -595,7 +623,7 @@ function on_toggle(mode)
         mp.osd_message(string.format("%s resumed.", label_prefix), 3)
     end
     if mode then
-        clean_filter = true
+        filter_removed = true
     end
 end
 
@@ -619,6 +647,7 @@ local function on_start()
         return
     end
 
+    buffer = {size = 0}
     init_source()
 
     mp.observe_property("osd-dimensions", "native", osd_size_change)

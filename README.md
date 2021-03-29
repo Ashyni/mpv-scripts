@@ -23,7 +23,7 @@ script=/storage/emulated/0/mpv/autocrop.lua
 
 - 5 mode available: 0 disable, 1 on-demand, 2 single-start, 3 auto-manual, 4 auto-start.
 - Support Asymmetric offset.
-- New cropping meta are validate with a known list of aspect ratio and `new_valid_ratio_timer`, then without the list with `new_fallback_timer`.
+- New cropping meta are validate with a known list of aspect ratio and `new_known_ratio_timer`, then without the list with `new_fallback_timer`.
 - Correction of random metadata to an already trusted one, this mostly help to get a fast aspect ratio change with dark/ambiguous scene.
 - Auto adjust black threshold.
 - Auto pause the script when seeking/loading.
@@ -35,7 +35,7 @@ script=/storage/emulated/0/mpv/autocrop.lua
 
 ## OS
 
- - Windows: OK ([mpv](https://mpv.io/) or [mpv-shim](https://github.com/iwalton3/jellyfin-mpv-shim))
+ - Windows: OK ([mpv](https://mpv.io/) or [mpv-shim](https://github.com/jellyfin/jellyfin-desktop))
  - Linux:   Not tested
  - Android: OK ([mpv-android](https://github.com/mpv-android/mpv-android))
  - Mac:     Not tested
