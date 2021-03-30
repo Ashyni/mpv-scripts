@@ -2,7 +2,7 @@
 
 Base on https://github.com/mpv-player/mpv/blob/master/TOOLS/lua/autocrop.lua.
 
-Script to automatically "cropping"  hard coded black bars in real time on Ultra Wide Screen (21:9) or any wider screen (phone).
+Script to "cropping" dynamically, hard-coded black bars with collected metadata for Ultra Wide Screen (21:9) or any wider screen than 16:9 (phone).
 
 ## Status
 
@@ -22,12 +22,13 @@ script=/storage/emulated/0/mpv/autocrop.lua
 ## Features
 
 - 5 mode available: 0 disable, 1 on-demand, 2 single-start, 3 auto-manual, 4 auto-start.
-- Support Asymmetric offset.
-- New cropping meta are validate with a known list of aspect ratio and `new_known_ratio_timer`, then without the list with `new_fallback_timer`.
+- New cropping meta are validate with a known list of aspect ratio and `new_known_ratio_timer`, and without the list with `new_fallback_timer`.
 - Correction of random metadata to an already trusted one, this mostly help to get a fast aspect ratio change with dark/ambiguous scene.
-- Auto adjust black threshold.
+- Support Asymmetric offset.
+- Auto adjust black threshold (cropdetect=limit).
 - Auto pause the script when seeking/loading.
-- Option to prevent change during a certain time (in scene changing back and forth in less than X seconds).
+- Option to prevent aspect ratio change during a certain time (in scene changing back and forth in less than X seconds).
+- Allow deviation of continuous data required to approve new meta.
 
 ## To-Do
 
