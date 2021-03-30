@@ -26,7 +26,6 @@ deviation: [0-N] number of collected meta that can deviate to approved a new met
 detect_limit, detect_round, detect_seconds: See https://ffmpeg.org/ffmpeg-filters.html#cropdetect
     other option for this filter: skip (new 12/2020), reset
 ]]
--- TODO correction: match the more detected as secondary
 require "mp.msg"
 require "mp.options"
 
@@ -78,7 +77,6 @@ local new_fallback_timer = math.ceil(options.new_fallback_timer / (detect_second
 local new_known_ratio_timer = math.ceil(options.new_known_ratio_timer / (detect_seconds + .05))
 local fast_change_timer = math.ceil(options.fast_change_timer / (detect_seconds + .05))
 limit.current = options.detect_limit
-limit.last = options.detect_limit
 limit.step = 2
 buffer.max = new_fallback_timer
 if new_fallback_timer == 0 then
@@ -269,7 +267,7 @@ local function process_metadata()
     local invalid = not (collected.h > 0 and collected.w > 0)
     local new_ready
     -- Store cropping meta, find trusted offset, and correct to closest meta if neccessary
-    if not (collected.detect_source and limit.change == -1) then
+    if not invalid and not (collected.detect_source and limit.change == -1) then
         cycle_buffer(collected.whxy)
         -- Init stats[whxy]
         if not stats[collected.whxy] then
@@ -360,13 +358,16 @@ local function process_metadata()
             for whxy in pairs(stats) do
                 local diff = {}
                 if stats[whxy].applied > 0 then
-                    for _, axis in pairs({"x", "y"}) do
+                    for _, axis in pairs({"w", "h", "x", "y"}) do
                         diff[axis] =
                             math.max(collected[axis], stats[whxy][axis]) - math.min(collected[axis], stats[whxy][axis])
                     end
-                    --print_debug(string.format("\\ Search %s | %s %s", whxy, diff.x, diff.y))
-                    if not closest.whxy or diff.x <= closest.x and diff.y <= closest.y then
-                        closest.x, closest.y = diff.x, diff.y
+                    --print_debug(string.format("\\ Search %s | %s %s %s %s", whxy, diff.w, diff.h, diff.x, diff.y))
+                    if
+                        not closest.whxy or
+                            diff.w <= closest.w and diff.h <= closest.h and diff.x <= closest.x and diff.y <= closest.y
+                     then
+                        closest.w, closest.h, closest.x, closest.y = diff.w, diff.h, diff.x, diff.y
                         closest.whxy = whxy
                     --print_debug(string.format("  \\ Find %s", closest.whxy))
                     end
@@ -412,7 +413,6 @@ local function process_metadata()
     local trusted_offset_x = is_trusted_offset(current.offset.x, "x")
 
     -- Auto adjust black threshold and detect_seconds
-    limit.last = limit.current
     if current.detect_source then
         -- Increase limit
         limit.change = 1
@@ -460,7 +460,7 @@ local function process_metadata()
 
     -- Crop Filter
     local confirmation =
-        not current.detect_source and
+        not current.detect_source and stats[current.whxy] and
         (stats[current.whxy].applied > 0 and stats[current.whxy].last_seen >= fast_change_timer or new_ready)
     local crop_filter =
         not invalid and not current.already_apply and trusted_offset_x and trusted_offset_y and
