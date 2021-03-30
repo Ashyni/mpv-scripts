@@ -26,6 +26,7 @@ deviation: [0-N] number of collected meta that can deviate to approved a new met
 detect_limit, detect_round, detect_seconds: See https://ffmpeg.org/ffmpeg-filters.html#cropdetect
     other option for this filter: skip (new 12/2020), reset
 ]]
+-- TODO correction: match the more detected as secondary
 require "mp.msg"
 require "mp.options"
 
@@ -79,6 +80,10 @@ local fast_change_timer = math.ceil(options.fast_change_timer / (detect_seconds 
 limit.current = options.detect_limit
 limit.last = options.detect_limit
 limit.step = 2
+buffer.max = new_fallback_timer
+if new_fallback_timer == 0 then
+    buffer.max = new_known_ratio_timer
+end
 
 local function is_trusted_offset(offset, axis)
     for _, v in pairs(trusted_offset[axis]) do
@@ -141,10 +146,10 @@ local function remove_filter(label)
 end
 
 local function cycle_buffer(meta)
-    table.insert(buffer, meta)
+    table.insert(buffer.whxy, meta)
     buffer.size = buffer.size + 1
-    if buffer.size > new_fallback_timer + options.deviation then
-        table.remove(buffer, 1)
+    if buffer.size > buffer.max + options.deviation then
+        table.remove(buffer.whxy, 1)
         buffer.size = buffer.size - 1
     end
 end
@@ -241,7 +246,7 @@ local function collect_metadata()
     if cropdetect_metadata and cropdetect_metadata["lavfi.cropdetect.w"] then
         -- Remove filter to clear vf-metadata
         remove_filter(labels.cropdetect)
-        -- Make metadata usable
+        -- Make metadata usable / lavfi.cropdetect = {w, h, x, y, x1, y1, x2, y2}
         collected = {
             w = tonumber(cropdetect_metadata["lavfi.cropdetect.w"]),
             h = tonumber(cropdetect_metadata["lavfi.cropdetect.h"]),
@@ -316,16 +321,16 @@ local function process_metadata()
         -- Decrease known_ratio_detected
         if buffer.size > (new_known_ratio_timer + options.deviation) then
             local pos = buffer.size - (new_known_ratio_timer + options.deviation)
-            if stats[buffer[pos]].applied == 0 and stats[collected.whxy].is_known_ratio then
-                stats[buffer[pos]].known_ratio_detected = stats[buffer[pos]].known_ratio_detected - 1
+            if stats[buffer.whxy[pos]].applied == 0 and stats[collected.whxy].is_known_ratio then
+                stats[buffer.whxy[pos]].known_ratio_detected = stats[buffer.whxy[pos]].known_ratio_detected - 1
             end
         end
         -- Decrease fallback_detected
-        if buffer.size == new_fallback_timer + options.deviation and stats[buffer[1]].applied == 0 then
-            stats[buffer[1]].fallback_detected = stats[buffer[1]].fallback_detected - 1
+        if buffer.size == buffer.max + options.deviation and stats[buffer.whxy[1]].applied == 0 then
+            stats[buffer.whxy[1]].fallback_detected = stats[buffer.whxy[1]].fallback_detected - 1
             -- Cleanup stats no longer in the buffer
-            if stats[buffer[1]].fallback_detected == 0 then
-                stats[buffer[1]] = nil
+            if stats[buffer.whxy[1]].fallback_detected == 0 then
+                stats[buffer.whxy[1]] = nil
             end
         end
 
@@ -333,7 +338,7 @@ local function process_metadata()
         new_ready =
             stats[collected.whxy].applied == 0 and
             (stats[collected.whxy].known_ratio_detected >= new_known_ratio_timer or
-                stats[collected.whxy].fallback_detected >= new_fallback_timer)
+                new_fallback_timer > 0 and stats[collected.whxy].fallback_detected >= new_fallback_timer)
 
         -- Add Trusted Offset
         local add_new_offset = {}
@@ -426,13 +431,13 @@ local function process_metadata()
         end
     elseif
         not invalid and
-            (collected.corrected and stats[collected.whxy].potential > 1 or
+            (stats[collected.whxy].applied == 0 and stats[collected.whxy].potential > 1 or
                 not collected.corrected and (trusted_offset_y or trusted_offset_x))
      then
         -- Stable data, reset limit/step
         limit.change, limit.step, detect_seconds = 0, 2, options.detect_seconds
         -- Allow detection of a second brighter crop
-        local timer_reset = new_fallback_timer + 1
+        local timer_reset = buffer.max + 1
         if stats[current.whxy].applied > 0 then
             timer_reset = fast_change_timer + 1
         elseif trusted_offset_y and trusted_offset_x then
@@ -541,11 +546,14 @@ function cleanup()
         remove_filter(label)
     end
     -- Reset some values
-    buffer, stats, collected = {}, {}, {}
+    stats, collected = {}, {}
     limit.current = options.detect_limit
 end
 
-local function init_source()
+local function init()
+    buffer.whxy = {}
+    buffer.size = 0
+
     local width = mp.get_property_native("width")
     local height = mp.get_property_native("height")
     source = {
@@ -560,6 +568,7 @@ local function init_source()
     stats[source.whxy] = {applied = 1, detected = 0, last_seen = 0}
     copy_meta(source, stats[source.whxy])
     compute_meta(stats[source.whxy])
+
     trusted_offset.y, trusted_offset.x = {0}, {0}
 end
 
@@ -647,8 +656,7 @@ local function on_start()
         return
     end
 
-    buffer = {size = 0}
-    init_source()
+    init()
 
     mp.observe_property("osd-dimensions", "native", osd_size_change)
 
