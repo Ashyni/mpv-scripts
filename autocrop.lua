@@ -76,6 +76,7 @@ local detect_seconds = options.detect_seconds
 local new_fallback_timer = math.ceil(options.new_fallback_timer / (detect_seconds + .05))
 local new_known_ratio_timer = math.ceil(options.new_known_ratio_timer / (detect_seconds + .05))
 local fast_change_timer = math.ceil(options.fast_change_timer / (detect_seconds + .05))
+local transition_timer = string.format("%.3f", .175 / (options.detect_seconds + .05))
 limit.current = options.detect_limit
 limit.step = 2
 buffer.max = new_fallback_timer
@@ -229,7 +230,7 @@ local function print_debug(type, label, meta)
             if options.debug then
                 mp.msg.info("Buffer:")
                 for _, whxy in pairs(buffer.whxy) do
-                    print(whxy)
+                    print(whxy[1], whxy[2])
                 end
             end
         end
@@ -262,16 +263,21 @@ local function process_metadata()
     compute_meta(collected)
     print_debug("detail", "Collected", collected)
     local invalid = not (collected.h > 0 and collected.w > 0)
+    local increment_timer = 1
+    if detect_seconds ~= options.detect_seconds then
+        increment_timer = transition_timer
+    end
 
-    -- TODO filter last_seen/fallback_detected/known_ratio_detected if detect_seconds ~= options.detect_seconds
     -- Buffer cycle
-    table.insert(buffer.whxy, collected.whxy)
+    table.insert(buffer.whxy, {collected.whxy, increment_timer})
     buffer.size = buffer.size + 1
     if buffer.size > buffer.max + options.deviation then
-        if stats[buffer.whxy[1]].applied == 0 then
-            stats[buffer.whxy[1]].fallback_detected = stats[buffer.whxy[1]].fallback_detected - 1
-            if stats[buffer.whxy[1]].fallback_detected == 0 then
-                stats[buffer.whxy[1]] = nil
+        if stats[buffer.whxy[1][1]].applied == 0 then
+            stats[buffer.whxy[1][1]].fallback_detected =
+                string.format("%.3f", stats[buffer.whxy[1][1]].fallback_detected) - buffer.whxy[1][2]
+            -- use string.format to avoid float error, and <= 0 to compare just in case
+            if stats[buffer.whxy[1][1]].fallback_detected <= 0 then
+                stats[buffer.whxy[1][1]] = nil
             end
         end
         table.remove(buffer.whxy, 1)
@@ -307,9 +313,11 @@ local function process_metadata()
             stats[collected.whxy].potential = 0
         end
         stats[collected.whxy].potential = stats[collected.whxy].potential + 1
-        stats[collected.whxy].fallback_detected = stats[collected.whxy].fallback_detected + 1
+        stats[collected.whxy].fallback_detected =
+            string.format("%.3f", stats[collected.whxy].fallback_detected) + increment_timer
         if stats[collected.whxy].is_known_ratio then
-            stats[collected.whxy].known_ratio_detected = stats[collected.whxy].known_ratio_detected + 1
+            stats[collected.whxy].known_ratio_detected =
+                string.format("%.3f", stats[collected.whxy].known_ratio_detected) + increment_timer
         end
     else
         stats[collected.whxy].potential = nil
@@ -330,8 +338,9 @@ local function process_metadata()
     -- Decrease known_ratio_detected
     if buffer.size > new_known_ratio_timer + options.deviation then
         local pos = buffer.size - (new_known_ratio_timer + options.deviation)
-        if stats[buffer.whxy[pos]].applied == 0 and stats[buffer.whxy[pos]].is_known_ratio then
-            stats[buffer.whxy[pos]].known_ratio_detected = stats[buffer.whxy[pos]].known_ratio_detected - 1
+        if stats[buffer.whxy[pos][1]].applied == 0 and stats[buffer.whxy[pos][1]].is_known_ratio then
+            stats[buffer.whxy[pos][1]].known_ratio_detected =
+                string.format("%.3f", stats[buffer.whxy[pos][1]].known_ratio_detected) - increment_timer
         end
     end
 
@@ -361,18 +370,23 @@ local function process_metadata()
         for whxy in pairs(stats) do
             local diff = {}
             if stats[whxy].applied > 0 then
+                diff.count = 0
                 for _, axis in pairs({"w", "h", "x", "y"}) do
                     diff[axis] =
                         math.max(collected[axis], stats[whxy][axis]) - math.min(collected[axis], stats[whxy][axis])
+                    if diff[axis] == 0 then
+                        diff.count = diff.count + 1
+                    end
                 end
-                --print_debug(string.format("\\ Search %s | %s %s %s %s", whxy, diff.w, diff.h, diff.x, diff.y))
-                -- TODO find a better pattern
+                -- print_debug(
+                --     string.format("\\ Search %s, %s %s %s %s, %s", whxy, diff.w, diff.h, diff.x, diff.y, diff.count)
+                -- )
                 if
-                    not closest.whxy or
+                    not closest.whxy or diff.count >= 3 or
                         diff.w <= closest.w and diff.h <= closest.h and diff.x <= closest.x and diff.y <= closest.y
                  then
                     closest.w, closest.h, closest.x, closest.y = diff.w, diff.h, diff.x, diff.y
-                    closest.whxy = whxy
+                    closest.count, closest.whxy = diff.count, whxy
                 --print_debug(string.format("  \\ Find %s", closest.whxy))
                 end
             end
@@ -402,17 +416,17 @@ local function process_metadata()
             if stats[whxy].last_seen > 0 then
                 stats[whxy].last_seen = 0
             end
-            stats[whxy].last_seen = stats[whxy].last_seen - 1
+            stats[whxy].last_seen = string.format("%.3f", stats[whxy].last_seen) - increment_timer
         else
             if stats[whxy].last_seen < 0 then
                 stats[whxy].last_seen = 0
             end
-            stats[whxy].last_seen = stats[whxy].last_seen + 1
+            stats[whxy].last_seen = string.format("%.3f", stats[whxy].last_seen) + increment_timer
         end
     end
 
     local detect_source =
-        current.detect_source and (limit.change == 1 or stats[current.whxy].last_seen > fast_change_timer)
+        current.detect_source and (limit.change == 1 or stats[current.whxy].last_seen >= fast_change_timer)
     local trusted_offset_y = is_trusted_offset(current.offset.y, "y")
     local trusted_offset_x = is_trusted_offset(current.offset.x, "x")
 
@@ -441,11 +455,11 @@ local function process_metadata()
         -- Stable data, reset limit/step
         limit.change, limit.step, detect_seconds = 0, 2, options.detect_seconds
         -- Allow detection of a second brighter crop
-        local timer_reset = buffer.max + 1
+        local timer_reset = buffer.max
         if stats[current.whxy].applied > 0 then
-            timer_reset = fast_change_timer + 1
+            timer_reset = fast_change_timer
         elseif trusted_offset_y and trusted_offset_x then
-            timer_reset = new_known_ratio_timer + 1
+            timer_reset = new_known_ratio_timer
         end
         if stats[current.whxy].last_seen > timer_reset then
             limit.current = options.detect_limit
