@@ -143,15 +143,6 @@ local function remove_filter(label)
     end
 end
 
-local function cycle_buffer(meta)
-    table.insert(buffer.whxy, meta)
-    buffer.size = buffer.size + 1
-    if buffer.size > buffer.max + options.deviation then
-        table.remove(buffer.whxy, 1)
-        buffer.size = buffer.size - 1
-    end
-end
-
 local function compute_meta(meta)
     meta.whxy = string.format("w=%s:h=%s:x=%s:y=%s", meta.w, meta.h, meta.x, meta.y)
     meta.detect_source = meta.whxy == source.whxy
@@ -235,6 +226,12 @@ local function print_debug(type, label, meta)
                     )
                 end
             end
+            if options.debug then
+                mp.msg.info("Buffer:")
+                for _, whxy in pairs(buffer.whxy) do
+                    print(whxy)
+                end
+            end
         end
     end
 end
@@ -265,125 +262,132 @@ local function process_metadata()
     compute_meta(collected)
     print_debug("detail", "Collected", collected)
     local invalid = not (collected.h > 0 and collected.w > 0)
-    local new_ready
-    -- Store cropping meta, find trusted offset, and correct to closest meta if neccessary
-    if not invalid and not (collected.detect_source and limit.change == -1) then
-        cycle_buffer(collected.whxy)
-        -- Init stats[whxy]
-        if not stats[collected.whxy] then
-            stats[collected.whxy] = {
-                applied = 0,
-                detected = 0,
-                last_seen = 0,
-                potential = 0,
-                fallback_detected = 0,
-                known_ratio_detected = 0
-            }
-            copy_meta(collected, stats[collected.whxy])
-            compute_meta(stats[collected.whxy])
-            -- Check aspect ratio
-            for _, ratio in pairs(options.ratios) do
-                if collected.h == math.floor(collected.w / ratio) or collected.h == math.ceil(collected.w / ratio) then
-                    stats[collected.whxy].is_known_ratio = true
-                end
-            end
-        end
 
-        -- Increase
-        stats[collected.whxy].detected = stats[collected.whxy].detected + 1
-        if stats[collected.whxy].applied == 0 then
-            if stats[collected.whxy].potential < 0 then
-                stats[collected.whxy].potential = 0
-            end
-            stats[collected.whxy].potential = stats[collected.whxy].potential + 1
-            stats[collected.whxy].fallback_detected = stats[collected.whxy].fallback_detected + 1
-            if stats[collected.whxy].is_known_ratio then
-                stats[collected.whxy].known_ratio_detected = stats[collected.whxy].known_ratio_detected + 1
-            end
-        else
-            stats[collected.whxy].potential = nil
-            stats[collected.whxy].known_ratio_detected = nil
-            stats[collected.whxy].fallback_detected = nil
-        end
-
-        -- Cycle potential
-        for whxy in pairs(stats) do
-            if stats[whxy].applied == 0 and whxy ~= collected.whxy then
-                if stats[whxy].potential > 0 then
-                    stats[whxy].potential = 0
-                end
-                stats[whxy].potential = stats[whxy].potential - 1
-            end
-        end
-
-        -- Decrease known_ratio_detected
-        if buffer.size > (new_known_ratio_timer + options.deviation) then
-            local pos = buffer.size - (new_known_ratio_timer + options.deviation)
-            if stats[buffer.whxy[pos]].applied == 0 and stats[collected.whxy].is_known_ratio then
-                stats[buffer.whxy[pos]].known_ratio_detected = stats[buffer.whxy[pos]].known_ratio_detected - 1
-            end
-        end
-        -- Decrease fallback_detected
-        if buffer.size == buffer.max + options.deviation and stats[buffer.whxy[1]].applied == 0 then
+    -- TODO filter last_seen/fallback_detected/known_ratio_detected if detect_seconds ~= options.detect_seconds
+    -- Buffer cycle
+    table.insert(buffer.whxy, collected.whxy)
+    buffer.size = buffer.size + 1
+    if buffer.size > buffer.max + options.deviation then
+        if stats[buffer.whxy[1]].applied == 0 then
             stats[buffer.whxy[1]].fallback_detected = stats[buffer.whxy[1]].fallback_detected - 1
-            -- Cleanup stats no longer in the buffer
             if stats[buffer.whxy[1]].fallback_detected == 0 then
                 stats[buffer.whxy[1]] = nil
             end
         end
+        table.remove(buffer.whxy, 1)
+        buffer.size = buffer.size - 1
+    end
 
-        -- Check if a new meta can be approved
-        new_ready =
-            stats[collected.whxy].applied == 0 and
-            (stats[collected.whxy].known_ratio_detected >= new_known_ratio_timer or
-                new_fallback_timer > 0 and stats[collected.whxy].fallback_detected >= new_fallback_timer)
-
-        -- Add Trusted Offset
-        local add_new_offset = {}
-        for _, axis in pairs({"x", "y"}) do
-            add_new_offset[axis] = not invalid and not is_trusted_offset(collected.offset[axis], axis) and new_ready
-            if add_new_offset[axis] then
-                table.insert(trusted_offset[axis], stats[collected.whxy].offset[axis])
-            end
-        end
-
-        -- Meta correction
-        if
-            not invalid and stats[collected.whxy].applied == 0 and
-                (collected.w > source.w * options.correction or collected.h > source.h * options.correction)
-         then
-            collected.corrected = {}
-            -- Find closest meta already applied
-            local closest = {}
-            for whxy in pairs(stats) do
-                local diff = {}
-                if stats[whxy].applied > 0 then
-                    for _, axis in pairs({"w", "h", "x", "y"}) do
-                        diff[axis] =
-                            math.max(collected[axis], stats[whxy][axis]) - math.min(collected[axis], stats[whxy][axis])
-                    end
-                    --print_debug(string.format("\\ Search %s | %s %s %s %s", whxy, diff.w, diff.h, diff.x, diff.y))
-                    if
-                        not closest.whxy or
-                            diff.w <= closest.w and diff.h <= closest.h and diff.x <= closest.x and diff.y <= closest.y
-                     then
-                        closest.w, closest.h, closest.x, closest.y = diff.w, diff.h, diff.x, diff.y
-                        closest.whxy = whxy
-                    --print_debug(string.format("  \\ Find %s", closest.whxy))
-                    end
-                end
-            end
-            -- Check if the corrected data is already applied or flush it
-            if closest.whxy ~= applied.whxy then
-                copy_meta(collected, collected.corrected)
-                collected.corrected.w, collected.corrected.h = stats[closest.whxy].w, stats[closest.whxy].h
-                collected.corrected.x, collected.corrected.y = stats[closest.whxy].x, stats[closest.whxy].y
-                compute_meta(collected.corrected)
-            else
-                collected.corrected = nil
+    -- Init stats[whxy]
+    if not stats[collected.whxy] then
+        stats[collected.whxy] = {
+            applied = 0,
+            detected = 0,
+            last_seen = 0,
+            potential = 0,
+            fallback_detected = 0,
+            known_ratio_detected = 0
+        }
+        copy_meta(collected, stats[collected.whxy])
+        compute_meta(stats[collected.whxy])
+        -- Check aspect ratio
+        for _, ratio in pairs(options.ratios) do
+            if collected.h == math.floor(collected.w / ratio) or collected.h == math.ceil(collected.w / ratio) then
+                stats[collected.whxy].is_known_ratio = true
             end
         end
     end
+
+    -- Increase
+    if not (collected.detect_source and limit.change == -1) then
+        stats[collected.whxy].detected = stats[collected.whxy].detected + 1
+    end
+    if stats[collected.whxy].applied == 0 then
+        if stats[collected.whxy].potential < 0 then
+            stats[collected.whxy].potential = 0
+        end
+        stats[collected.whxy].potential = stats[collected.whxy].potential + 1
+        stats[collected.whxy].fallback_detected = stats[collected.whxy].fallback_detected + 1
+        if stats[collected.whxy].is_known_ratio then
+            stats[collected.whxy].known_ratio_detected = stats[collected.whxy].known_ratio_detected + 1
+        end
+    else
+        stats[collected.whxy].potential = nil
+        stats[collected.whxy].known_ratio_detected = nil
+        stats[collected.whxy].fallback_detected = nil
+    end
+
+    -- Cycle potential
+    for whxy in pairs(stats) do
+        if stats[whxy].applied == 0 and whxy ~= collected.whxy then
+            if stats[whxy].potential > 0 then
+                stats[whxy].potential = 0
+            end
+            stats[whxy].potential = stats[whxy].potential - 1
+        end
+    end
+
+    -- Decrease known_ratio_detected
+    if buffer.size > new_known_ratio_timer + options.deviation then
+        local pos = buffer.size - (new_known_ratio_timer + options.deviation)
+        if stats[buffer.whxy[pos]].applied == 0 and stats[buffer.whxy[pos]].is_known_ratio then
+            stats[buffer.whxy[pos]].known_ratio_detected = stats[buffer.whxy[pos]].known_ratio_detected - 1
+        end
+    end
+
+    -- Check if a new meta can be approved
+    local new_ready =
+        stats[collected.whxy].applied == 0 and
+        (stats[collected.whxy].known_ratio_detected >= new_known_ratio_timer or
+            new_fallback_timer > 0 and stats[collected.whxy].fallback_detected >= new_fallback_timer)
+
+    -- Add Trusted Offset
+    local add_new_offset = {}
+    for _, axis in pairs({"x", "y"}) do
+        add_new_offset[axis] = not invalid and not is_trusted_offset(collected.offset[axis], axis) and new_ready
+        if add_new_offset[axis] then
+            table.insert(trusted_offset[axis], stats[collected.whxy].offset[axis])
+        end
+    end
+
+    -- Meta correction
+    if
+        not invalid and stats[collected.whxy].applied == 0 and
+            (collected.w > source.w * options.correction or collected.h > source.h * options.correction)
+     then
+        collected.corrected = {}
+        -- Find closest meta already applied
+        local closest = {}
+        for whxy in pairs(stats) do
+            local diff = {}
+            if stats[whxy].applied > 0 then
+                for _, axis in pairs({"w", "h", "x", "y"}) do
+                    diff[axis] =
+                        math.max(collected[axis], stats[whxy][axis]) - math.min(collected[axis], stats[whxy][axis])
+                end
+                --print_debug(string.format("\\ Search %s | %s %s %s %s", whxy, diff.w, diff.h, diff.x, diff.y))
+                -- TODO find a better pattern
+                if
+                    not closest.whxy or
+                        diff.w <= closest.w and diff.h <= closest.h and diff.x <= closest.x and diff.y <= closest.y
+                 then
+                    closest.w, closest.h, closest.x, closest.y = diff.w, diff.h, diff.x, diff.y
+                    closest.whxy = whxy
+                --print_debug(string.format("  \\ Find %s", closest.whxy))
+                end
+            end
+        end
+        -- Check if the corrected data is already applied or flush it
+        if closest.whxy ~= applied.whxy then
+            copy_meta(collected, collected.corrected)
+            collected.corrected.w, collected.corrected.h = stats[closest.whxy].w, stats[closest.whxy].h
+            collected.corrected.x, collected.corrected.y = stats[closest.whxy].x, stats[closest.whxy].y
+            compute_meta(collected.corrected)
+        else
+            collected.corrected = nil
+        end
+    end
+    --end
 
     -- Use corrected metadata as main data
     local current = collected
