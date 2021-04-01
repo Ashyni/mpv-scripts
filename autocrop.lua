@@ -21,7 +21,7 @@ start_delay: seconds - Delay use by mode = 2 (single-start), to skip intro.
 prevent_change_mode: [0-2] 0 any, 1 keep-largest, 2 keep-lowest - The prevent_change_timer is trigger after a change,
     set prevent_change_timer to 0, to disable this.
 
-deviation: [0-N] seconds of collected meta that can deviate to approved a new meta (default to validate: 12/12+3).
+deviation: [0-N] seconds of collected meta that can deviate to approved a new meta (default to validate: 6/6+2).
 
 detect_limit, detect_round, detect_seconds: See https://ffmpeg.org/ffmpeg-filters.html#cropdetect
     other option for this filter: skip (new 12/2020), reset
@@ -40,7 +40,7 @@ local options = {
     new_known_ratio_timer = 6,
     new_fallback_timer = 18,
     ratios = {2.39, 2.35, 2.2, 2, 1.85, 16 / 9, 4 / 3, 9 / 16},
-    deviation = 3,
+    deviation = 2,
     correction = 0.6,
     -- ffmpeg-filter
     detect_limit = 24,
