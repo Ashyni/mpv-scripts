@@ -151,21 +151,20 @@ local function compute_meta(meta)
     meta.offset = {x = meta.x - (source.w - meta.w) / 2, y = meta.y - (source.h - meta.h) / 2}
 end
 
-local function osd_size_change()
-    -- TODO handle portait video
+local function osd_size_change(orientation)
     local prop_maximized = mp.get_property("window-maximized")
     local prop_fullscreen = mp.get_property("fullscreen")
     local osd = mp.get_property_native("osd-dimensions")
     if prop_fullscreen == "no" then
-        -- Keep window width to avoid reset to source size when cropping.
-        -- print("osd-width: ", osd.w, "osd-height: ", osd.h, "margin: ", osd.mt, osd.mb, osd.ml, osd.mr)
-        if prop_maximized == "no" then
-            local side = tonumber(osd.w) - (tonumber(osd.ml) + tonumber(osd.mr))
-            if options.resize_windowed then
-                mp.set_property("geometry", string.format("%s", side))
-                mp.set_property("autofit", string.format("%s", side))
+        -- Keep window width or height to avoid reset to source size when cropping.
+        --print("osd-width:", osd.w, "osd-height:", osd.h, "margin:", osd.mt, osd.mb, osd.ml, osd.mr)
+        if prop_maximized == "yes" or not options.resize_windowed then
+            mp.set_property("geometry", string.format("%sx%s", osd.w, osd.h))
+        else
+            if orientation then
+                mp.set_property("geometry", string.format("%s", osd.w))
             else
-                mp.set_property("geometry", string.format("%sx%s", osd.w, osd.h))
+                mp.set_property("geometry", string.format("x%s", osd.h))
             end
         end
     end
@@ -494,6 +493,7 @@ local function process_metadata()
         -- Apply cropping
         stats[current.whxy].applied = stats[current.whxy].applied + 1
         if not timers.prevent_change or not timers.prevent_change:is_enabled() then
+            osd_size_change(current.w > current.h)
             mp.command(string.format("no-osd vf append @%s:lavfi-crop=%s", labels.crop, current.whxy))
             print_debug(string.format("- Apply: %s", current.whxy))
             -- Prevent upcomming change if a timers is defined
