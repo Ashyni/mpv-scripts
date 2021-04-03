@@ -149,6 +149,10 @@ local function compute_meta(meta)
     meta.detect_source = meta.whxy == source.whxy
     meta.already_apply = meta.whxy == applied.whxy
     meta.offset = {x = meta.x - (source.w - meta.w) / 2, y = meta.y - (source.h - meta.h) / 2}
+    meta.mt = meta.y
+    meta.mb = source.h - meta.h - meta.y
+    meta.ml = meta.x
+    meta.mr = source.w - meta.w - meta.x
 end
 
 local function osd_size_change(orientation)
@@ -368,7 +372,7 @@ local function process_metadata()
     -- Meta correction
     if
         not invalid and stats[collected.whxy].applied == 0 and
-            (collected.w > source.w * options.correction or collected.h > source.h * options.correction)
+            (collected.w > source.w * options.correction and collected.h > source.h * options.correction)
      then
         collected.corrected = {}
         -- Find closest meta already applied
@@ -377,28 +381,39 @@ local function process_metadata()
             local diff = {}
             if stats[whxy].applied > 0 then
                 diff.count = 0
-                for _, axis in pairs({"w", "h", "x", "y"}) do
+                for _, axis in pairs({"mt", "mb", "ml", "mr"}) do
                     diff[axis] =
                         math.max(collected[axis], stats[whxy][axis]) - math.min(collected[axis], stats[whxy][axis])
                     if diff[axis] == 0 then
                         diff.count = diff.count + 1
                     end
                 end
-                -- print_debug(
-                --     string.format("\\ Search %s, %s %s %s %s, %s", whxy, diff.w, diff.h, diff.x, diff.y, diff.count)
-                -- )
+                --[[ print_debug(
+                    string.format(
+                        "\\ Search %s, %s %s %s %s, %s",
+                        whxy,
+                        diff.mt,
+                        diff.mb,
+                        diff.ml,
+                        diff.mr,
+                        diff.count
+                    )
+                ) ]]
                 if
-                    not closest.whxy or diff.count >= 3 or
-                        diff.w <= closest.w and diff.h <= closest.h and diff.x <= closest.x and diff.y <= closest.y
+                    not closest.whxy and diff.count >= 1 or
+                        closest.whxy and
+                            (diff.count >= closest.count or
+                                diff.mt + diff.mb <= closest.mt + closest.mb and
+                                    diff.ml + diff.mr <= closest.ml + closest.mr)
                  then
-                    closest.w, closest.h, closest.x, closest.y = diff.w, diff.h, diff.x, diff.y
+                    closest.mt, closest.mb, closest.ml, closest.mr = diff.mt, diff.mb, diff.ml, diff.mr
                     closest.count, closest.whxy = diff.count, whxy
                 --print_debug(string.format("  \\ Find %s", closest.whxy))
                 end
             end
         end
         -- Check if the corrected data is already applied or flush it
-        if closest.whxy ~= applied.whxy then
+        if closest.whxy and closest.whxy ~= applied.whxy then
             copy_meta(collected, collected.corrected)
             collected.corrected.w, collected.corrected.h = stats[closest.whxy].w, stats[closest.whxy].h
             collected.corrected.x, collected.corrected.y = stats[closest.whxy].x, stats[closest.whxy].y
@@ -557,7 +572,9 @@ local function auto_crop()
 end
 
 function cleanup()
-    print_debug("stats")
+    if not paused then
+        print_debug("stats")
+    end
     mp.msg.info("Cleanup.")
     -- Kill all timers
     for index in pairs(timers) do
