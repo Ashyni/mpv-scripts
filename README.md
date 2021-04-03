@@ -1,8 +1,8 @@
-# autocrop.lua
+# dynamic-crop.lua
 
 Base on https://github.com/mpv-player/mpv/blob/master/TOOLS/lua/autocrop.lua.
 
-Script to "cropping" dynamically, hard-coded black bars with collected metadata for Ultra Wide Screen (21:9) or any wider screen than 16:9 (phone).
+Script to "cropping" dynamically, hard-coded black bars with collected metadata for Ultra Wide Screen (21:9) or any screen different from 16:9 (phone/old TV).
 
 ## Status
 
@@ -10,13 +10,13 @@ It's now really stable, but can probably be improved for more edge case.
 
 ## Usage
 
-Save `autocrop.lua` in `~/.config/.mpv/scripts/` (Linux/macOS) or `%AppData%\mpv\scripts\` (Windows) or `/storage/emulated/0/` (Android SD card). 
+Save `dynamic-crop.lua` in `~/.config/.mpv/scripts/` (Linux/macOS) or `%AppData%\mpv\scripts\` (Windows) or `/storage/emulated/0/` (Android SD card). 
 Edit your `mpv.conf` file to add `script=<path to the script>`, eg:
 ```
 #Windows mpv-shim:
-script=C:\Users\<username>\AppData\Roaming\jellyfin-mpv-shim\scripts\autocrop.lua
+script=C:\Users\<username>\AppData\Roaming\jellyfin-mpv-shim\scripts\dynamic-crop.lua
 #Android mpv-android:
-script=/storage/emulated/0/mpv/autocrop.lua
+script=/storage/emulated/0/mpv/dynamic-crop.lua
 ```
 
 ## Features
@@ -46,12 +46,14 @@ script=/storage/emulated/0/mpv/autocrop.lua
 
 SHIFT+C do:
 
-- If mode = 1-2, single cropping on demand, stays active until a valid cropping is apply.
-- If mode = 3-4, enable / disable continuous cropping.
+- Mode = 1-2, single cropping on demand, stays active until a valid cropping is apply.
+- Mode = 3-4, enable / disable continuous cropping.
 
 ## Troubleshooting
 
 If the script doesn't work, make sure mpv is build with the libavfilter `crop` and `cropdetect` by starting mpv with `./mpv --vf=help` or by adding at the #1 line in mpv.conf `vf=help` and check the log for `Available libavfilter filters:`.
+
+Make sure `hwdec=no`(default), if experiencing issue.
 
 ## Download on phone
 
