@@ -447,7 +447,8 @@ local function process_metadata()
     end
 
     local detect_source =
-        current.detect_source and (limit.change == 1 or stats[current.whxy].last_seen >= options.fast_change_timer)
+        current.detect_source and
+        (not collected.corrected and limit.change == 1 or stats[current.whxy].last_seen >= options.fast_change_timer)
     local trusted_offset_y = is_trusted_offset(current.offset.y, "y")
     local trusted_offset_x = is_trusted_offset(current.offset.x, "x")
 
