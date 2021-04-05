@@ -18,13 +18,21 @@ mode: [0-4] - 0 disable, 1 on-demand, 2 single-start, 3 auto-manual, 4 auto-star
 
 start_delay: seconds - Delay use by mode = 2 (single-start), to skip intro.
 
-prevent_change_mode: [0-2] 0 any, 1 keep-largest, 2 keep-lowest - The prevent_change_timer is trigger after a change,
-    set prevent_change_timer to 0, to disable this.
+prevent_change_mode: [0-2] - 0 any, 1 keep-largest, 2 keep-lowest - The prevent_change_timer is trigger after a change,
+    to disable this, set prevent_change_timer to 0.
 
-deviation: [0-N] seconds of collected meta that can deviate to approved a new meta (default to validate: 6/6+2).
+resize_windowed: [true/false] - False prevent the window to be rezize but still apply cropping,
+    this function always avoid the default behavior of resize the window to source size, in windowed/maximized mode.
+
+deviation: seconds - Time added that can deviate to approved a new meta (default to validate: 6/6+2).
+    to disable this, set 0.
+
+correction: [0.0-1] - Minimum % of collected meta (base on source size), to attempt a correction.
+    to disable this, set 1.
 
 detect_limit, detect_round, detect_seconds: See https://ffmpeg.org/ffmpeg-filters.html#cropdetect
     other option for this filter: skip (new 12/2020), reset
+detect_reset: [0-1]
 ]]
 require "mp.msg"
 require "mp.options"
@@ -38,10 +46,10 @@ local options = {
     resize_windowed = true,
     fast_change_timer = 2,
     new_known_ratio_timer = 6,
-    new_fallback_timer = 18,
-    ratios = {2.39, 2.35, 2.2, 2, 1.85, 16 / 9, 4 / 3, 9 / 16},
+    new_fallback_timer = 18, -- As to be greater than 'new_known_ratio_timer'
+    ratios = {2.4, 2.39, 2.35, 2.2, 2, 1.85, 16 / 9, 4 / 3, 9 / 16},
     deviation = 2,
-    correction = 0.6,
+    correction = 0.6, -- 0.6 equivalent to 60%
     -- ffmpeg-filter
     detect_limit = 24,
     detect_round = 2,
@@ -76,10 +84,6 @@ local detect_seconds = options.detect_seconds
 local play_time
 limit.current = options.detect_limit
 limit.step = 2
-buffer.time_max = options.new_fallback_timer
-if options.new_fallback_timer == 0 then
-    buffer.time_max = options.new_known_ratio_timer
-end
 
 local function is_trusted_offset(offset, axis)
     for _, v in pairs(trusted_offset[axis]) do
@@ -328,7 +332,7 @@ local function process_metadata()
     buffer.time_known = string.format("%.3f", buffer.time_known) + collected.time
     buffer.index_total = buffer.index_total + 1
     buffer.index_known_ratio = buffer.index_known_ratio + 1
-    while buffer.time_total - buffer.whxy[1][2] > buffer.time_max + options.deviation do
+    while buffer.time_total - buffer.whxy[1][2] > options.new_fallback_timer + options.deviation do
         if stats[buffer.whxy[1][1]].applied == 0 then
             stats[buffer.whxy[1][1]].fallback_detected =
                 string.format("%.3f", stats[buffer.whxy[1][1]].fallback_detected) - buffer.whxy[1][2]
@@ -477,7 +481,7 @@ local function process_metadata()
         -- Stable data, reset limit/step
         limit.change, limit.step, detect_seconds = 0, 2, options.detect_seconds
         -- Allow detection of a second brighter crop
-        local timer_reset = buffer.time_max
+        local timer_reset = options.new_fallback_timer
         if stats[current.whxy].applied > 0 then
             timer_reset = options.fast_change_timer
         elseif trusted_offset_y and trusted_offset_x then
