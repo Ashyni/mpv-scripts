@@ -396,13 +396,13 @@ local function process_metadata()
                 if
                     not closest.whxy and diff.count >= 1 or
                         closest.whxy and
-                            (diff.count >= closest.count or
+                            (diff.count >= closest.count and
                                 diff.mt + diff.mb <= closest.mt + closest.mb and
                                     diff.ml + diff.mr <= closest.ml + closest.mr)
                  then
                     closest.mt, closest.mb, closest.ml, closest.mr = diff.mt, diff.mb, diff.ml, diff.mr
                     closest.count, closest.whxy = diff.count, whxy
-                --print_debug(string.format("  \\ Find %s", closest.whxy))
+                -- print_debug(string.format("  \\ Find %s", closest.whxy))
                 end
             end
         end
