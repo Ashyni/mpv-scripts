@@ -21,18 +21,18 @@ start_delay: seconds - Delay use by mode = 2 (single-start), to skip intro.
 prevent_change_mode: [0-2] - 0 any, 1 keep-largest, 2 keep-lowest - The prevent_change_timer is trigger after a change,
     to disable this, set prevent_change_timer to 0.
 
-resize_windowed: [true/false] - False prevent the window to be rezize but still apply cropping,
-    this function always avoid the default behavior of resize the window to source size, in windowed/maximized mode.
+resize_windowed: [true/false] - False, prevents the window from being resized, but always applies cropping,
+    this function always avoids the default behavior to resize the window at the source size, in windowed/maximized mode.
 
-deviation: seconds - Time added that can deviate to approved a new meta (default to validate: 6/6+2).
+deviation: seconds - Extra time may deviate from the majority collected to approve a new metadata (to validate: 6/6+2).
     to disable this, set 0.
 
-correction: [0.0-1] - Minimum % of collected meta (base on source size), to attempt a correction.
+correction: [0.0-1] - Size minimum of collected meta (in percent based on source), to attempt a correction.
     to disable this, set 1.
 
 detect_limit, detect_round, detect_seconds: See https://ffmpeg.org/ffmpeg-filters.html#cropdetect
     other option for this filter: skip (new 12/2020), reset
-detect_reset: [0-1]
+detect_reset: [0-1] - 1, will try to find cropping metadata before watermark/logo.
 ]]
 require "mp.msg"
 require "mp.options"
@@ -46,7 +46,7 @@ local options = {
     resize_windowed = true,
     fast_change_timer = 2,
     new_known_ratio_timer = 6,
-    new_fallback_timer = 18, -- As to be greater than 'new_known_ratio_timer'
+    new_fallback_timer = 18, -- Has to be greater than 'new_known_ratio_timer'
     ratios = {2.4, 2.39, 2.35, 2.2, 2, 1.85, 16 / 9, 4 / 3, 9 / 16},
     deviation = 2,
     correction = 0.6, -- 0.6 equivalent to 60%
@@ -153,10 +153,8 @@ local function compute_meta(meta)
     meta.detect_source = meta.whxy == source.whxy
     meta.already_apply = meta.whxy == applied.whxy
     meta.offset = {x = meta.x - (source.w - meta.w) / 2, y = meta.y - (source.h - meta.h) / 2}
-    meta.mt = meta.y
-    meta.mb = source.h - meta.h - meta.y
-    meta.ml = meta.x
-    meta.mr = source.w - meta.w - meta.x
+    meta.mt, meta.mb = meta.y, source.h - meta.h - meta.y
+    meta.ml, meta.mr = meta.x, source.w - meta.w - meta.x
 end
 
 local function osd_size_change(orientation)
@@ -393,15 +391,7 @@ local function process_metadata()
                     end
                 end
                 --[[ print_debug(
-                    string.format(
-                        "\\ Search %s, %s %s %s %s, %s",
-                        whxy,
-                        diff.mt,
-                        diff.mb,
-                        diff.ml,
-                        diff.mr,
-                        diff.count
-                    )
+                    string.format("\\ Search %s, %s %s %s %s, %s", whxy, diff.mt, diff.mb, diff.ml, diff.mr, diff.count)
                 ) ]]
                 if
                     not closest.whxy and diff.count >= 1 or
@@ -615,7 +605,6 @@ local function init()
     stats[source.whxy] = {applied = 1, detected = 0, last_seen = 0}
     copy_meta(source, stats[source.whxy])
     compute_meta(stats[source.whxy])
-
     trusted_offset.y, trusted_offset.x = {0}, {0}
 end
 
