@@ -10,15 +10,17 @@ It's now really stable, but can probably be improved for more edge case.
 
 ## Usage
 
-Save `dynamic-crop.lua` in `~/.config/.mpv/scripts/` (Linux/macOS) or `%AppData%\mpv\scripts\` (Windows) or `/storage/emulated/0/` (Android SD card). 
-Edit your `mpv.conf` file to add `script=<path to the script>`, eg (use absolute path):
+Save `dynamic-crop.lua` in `~/.config/.mpv/scripts/` (Linux/macOS) or `%AppData%\mpv\scripts\` (Windows).
+
+Or edit your `mpv.conf` file to add `script=<custom path to the script>`, use absolute path and don't add it if you already put it in directory `scripts`:
 ```
+## Example
 # Linux/macOS:
-script=/home/<username>/.config/.mpv/scripts/
+script=/home/<username>/<any custom path you choose>/dynamic-crop.lua
 # Windows:
-script=C:\Users\<username>\AppData\Roaming\mpv\scripts\dynamic-crop.lua
+script=C:\Users\<username>\<any custom path you choose>\dynamic-crop.lua
 # Android mpv-android:
-script=/storage/emulated/0/mpv/dynamic-crop.lua
+script=/storage/emulated/0/<any custom path you choose>/dynamic-crop.lua
 ```
 
 ## Features
