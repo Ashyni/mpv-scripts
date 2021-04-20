@@ -28,9 +28,9 @@ script=/storage/emulated/0/<any custom path you choose>/dynamic-crop.lua
 - 5 mode available: 0 disable, 1 on-demand, 2 single-start, 3 auto-manual, 4 auto-start.
 - New cropping meta are validate with a known list of aspect ratio and `new_known_ratio_timer`, and without the list with `new_fallback_timer`.
 - Correction of random metadata to an already trusted one, this mostly help to get a fast aspect ratio change with dark/ambiguous scene.
-- Support asymmetric offset.
+- Support asymmetric offset (Re-center video).
 - Auto adjust black threshold (cropdetect=limit).
-- Auto pause the script when seeking/loading.
+- Handle seeking/loading.
 - Option to prevent aspect ratio change during a certain time (in scene changing back and forth in less than X seconds).
 - Allow deviation of continuous data required to approve new meta.
 
@@ -43,8 +43,8 @@ SHIFT+C do:
 
 ## To-Do
 
-- Improve stabilisation with less accurate detection (old movie, average quality video).
-- Auto pause with speed different than 1.
+- Improve stabilization with trembling video (old film, medium quality video).
+- Handle high speed change (superior to buffer max size).
 - Documentation.
 
 ## Troubleshooting
