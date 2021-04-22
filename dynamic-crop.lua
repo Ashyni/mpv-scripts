@@ -46,8 +46,8 @@ local options = {
     resize_windowed = true,
     fast_change_timer = 2,
     new_known_ratio_timer = 6,
-    new_fallback_timer = 18, -- Has to be greater than 'new_known_ratio_timer'
-    ratios = {2.4, 2.39, 2.35, 2.2, 2, 1.85, 16 / 9, 4 / 3, 9 / 16},
+    new_fallback_timer = 18, -- Has to be >= 'new_known_ratio_timer'
+    ratios = {2.4, 2.39, 2.35, 2.2, 2, 1.85, 16 / 9, 1.5, 4 / 3, 1.25, 9 / 16},
     deviation = 2,
     correction = 0.6, -- 0.6 equivalent to 60%
     -- ffmpeg-filter
@@ -330,29 +330,37 @@ local function process_metadata()
     buffer.time_known = string.format("%.3f", buffer.time_known) + collected.time
     buffer.index_total = buffer.index_total + 1
     buffer.index_known_ratio = buffer.index_known_ratio + 1
-    while buffer.time_total - buffer.whxy[1][2] > options.new_fallback_timer + options.deviation do
-        if stats[buffer.whxy[1][1]].applied == 0 then
-            stats[buffer.whxy[1][1]].fallback_detected =
-                string.format("%.3f", stats[buffer.whxy[1][1]].fallback_detected) - buffer.whxy[1][2]
-            -- use string.format to avoid float error, and <= 0 to compare just in case
-            if stats[buffer.whxy[1][1]].fallback_detected <= 0 then
-                stats[buffer.whxy[1][1]] = nil
+    while true do
+        buffer.pos = buffer.index_total - (buffer.index_known_ratio - 1)
+        local known_ratio_detected =
+            buffer.time_known - buffer.whxy[buffer.pos][2] > options.new_known_ratio_timer + options.deviation
+        if known_ratio_detected then
+            whxy = buffer.whxy[buffer.pos][1]
+            time = buffer.whxy[buffer.pos][2]
+            buffer.time_known = string.format("%.3f", buffer.time_known) - time
+            if stats[whxy].applied == 0 and stats[whxy].is_known_ratio then
+                stats[whxy].known_ratio_detected = string.format("%.3f", stats[whxy].known_ratio_detected) - time
             end
+            buffer.pos = buffer.pos + 1
+            buffer.index_known_ratio = buffer.index_known_ratio - 1
         end
-        buffer.time_total = string.format("%.3f", buffer.time_total) - buffer.whxy[1][2]
-        buffer.index_total = buffer.index_total - 1
-        table.remove(buffer.whxy, 1)
-    end
-    buffer.pos = (buffer.index_total - buffer.index_known_ratio) + 1
-    while buffer.time_known - buffer.whxy[buffer.pos][2] > options.new_known_ratio_timer + options.deviation do
-        buffer.time_known = string.format("%.3f", buffer.time_known) - buffer.whxy[buffer.pos][2]
-        if stats[buffer.whxy[buffer.pos][1]].applied == 0 and stats[buffer.whxy[buffer.pos][1]].is_known_ratio then
-            stats[buffer.whxy[buffer.pos][1]].known_ratio_detected =
-                string.format("%.3f", stats[buffer.whxy[buffer.pos][1]].known_ratio_detected) -
-                buffer.whxy[buffer.pos][2]
+        local fallback_detected = buffer.time_total - buffer.whxy[1][2] > options.new_fallback_timer + options.deviation
+        if fallback_detected then
+            if stats[buffer.whxy[1][1]].applied == 0 then
+                stats[buffer.whxy[1][1]].fallback_detected =
+                    string.format("%.3f", stats[buffer.whxy[1][1]].fallback_detected) - buffer.whxy[1][2]
+                -- use string.format to avoid float error, and <= 0 to compare just in case
+                if stats[buffer.whxy[1][1]].fallback_detected <= 0 then
+                    stats[buffer.whxy[1][1]] = nil
+                end
+            end
+            buffer.time_total = string.format("%.3f", buffer.time_total) - buffer.whxy[1][2]
+            buffer.index_total = buffer.index_total - 1
+            table.remove(buffer.whxy, 1)
         end
-        buffer.pos = buffer.pos + 1
-        buffer.index_known_ratio = buffer.index_known_ratio - 1
+        if not known_ratio_detected and not fallback_detected then
+            break
+        end
     end
     --print("Buffer:", buffer.time_total, buffer.index_total, "|", buffer.time_known, buffer.index_known_ratio)
 
@@ -396,9 +404,8 @@ local function process_metadata()
                 if
                     not closest.whxy and diff.count >= 1 or
                         closest.whxy and
-                            (diff.count >= closest.count and
-                                diff.mt + diff.mb <= closest.mt + closest.mb and
-                                    diff.ml + diff.mr <= closest.ml + closest.mr)
+                            (diff.count >= closest.count and diff.mt + diff.mb <= closest.mt + closest.mb and
+                                diff.ml + diff.mr <= closest.ml + closest.mr)
                  then
                     closest.mt, closest.mb, closest.ml, closest.mr = diff.mt, diff.mb, diff.ml, diff.mr
                     closest.count, closest.whxy = diff.count, whxy
@@ -527,7 +534,6 @@ local function process_metadata()
             on_toggle(true)
         end
     end
-    collected = {}
 end
 
 local function auto_crop()
@@ -556,6 +562,8 @@ local function auto_crop()
         function()
             if collect_metadata() and not (paused or toggled or seeking) then
                 process_metadata()
+                -- Forces a garbage collection cycle
+                collectgarbage()
             end
             -- Resume timers
             in_progress = false
