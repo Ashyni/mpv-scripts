@@ -355,7 +355,6 @@ local function process_metadata()
             collected.corrected = nil
         end
     end
-    -- end
 
     -- Use corrected metadata as main data
     local current = collected
