@@ -67,7 +67,7 @@ if options.mode == 0 then
 end
 
 -- Forward declaration
-local cleanup, on_toggle, collect_metadata, process_metadata
+local cleanup, on_toggle
 -- label
 local label_prefix = mp.get_script_name()
 local labels = {
@@ -247,94 +247,7 @@ local function auto_adjust_limit()
     if limit_current ~= limit.current then insert_cropdetect_filter() end
 end
 
-local function update_playback_time(_, time)
-    playback_time.prev = playback_time.current
-    playback_time.current = time
-    if not playback_time.insert then playback_time.insert = playback_time.current end
-
-    if not in_progress and playback_time.insert and playback_time.current and playback_time.prev then
-        if collected.is_source and playback_time.current > playback_time.insert and limit.current < options.detect_limit then
-            process_metadata("source")
-            auto_adjust_limit()
-        elseif state.pull and stats.trusted[collected.whxy] and stats.trusted[collected.whxy].last_seen >= 0 and
-            playback_time.current >= playback_time.insert +
-            (options.fast_change_timer - stats.trusted[collected.whxy].last_seen) and applied.whxy ~= collected.whxy then
-            state.pull = false
-            process_metadata("fast change")
-        elseif state.pull and stats.buffer[collected.whxy] and stats.buffer[collected.whxy].is_known_ratio and
-            playback_time.current >= playback_time.insert +
-            (options.new_known_ratio_timer - stats.buffer[collected.whxy].known_ratio_detected) then
-            state.pull = false
-            process_metadata("know detected")
-        elseif state.pull and stats.buffer[collected.whxy] and not stats.buffer[collected.whxy].is_known_ratio and
-            playback_time.current >= playback_time.insert +
-            (options.new_fallback_timer - stats.buffer[collected.whxy].fallback_detected) then
-            state.pull = false
-            process_metadata("fallback detected")
-        elseif state.buffer_cycle and playback_time.current >=
-            (playback_time.insert + options.new_fallback_timer + options.deviation) then
-            state.buffer_cycle = false
-            stats.buffer = {}
-            buffer = {ordered = {}, time_total = 0, time_known = 0, index_total = 0, index_known_ratio = 0}
-            process_metadata("cycle buffer")
-        end
-        -- Reset limit
-        if (not state.pull or not state.buffer_cycle) and limit.current < options.detect_limit then
-            limit.current = options.detect_limit
-            insert_cropdetect_filter()
-        end
-    end
-end
-
-function collect_metadata(_, table_)
-    -- Check the new metadata for availability and change
-    if table_ and table_["lavfi.cropdetect.w"] and table_["lavfi.cropdetect.h"] then
-        local tmp = {
-            w = tonumber(table_["lavfi.cropdetect.w"]),
-            h = tonumber(table_["lavfi.cropdetect.h"]),
-            x = tonumber(table_["lavfi.cropdetect.x"]),
-            y = tonumber(table_["lavfi.cropdetect.y"])
-        }
-        tmp.whxy = string.format("w=%s:h=%s:x=%s:y=%s", tmp.w, tmp.h, tmp.x, tmp.y)
-        if tmp.whxy ~= collected.whxy then
-            state.pull = true
-            state.buffer_cycle = true
-            if collected.whxy and playback_time.prev > playback_time.insert then process_metadata() end
-            if stats.trusted[tmp.whxy] then
-                collected = stats.trusted[tmp.whxy]
-            elseif stats.buffer[tmp.whxy] then
-                collected = stats.buffer[tmp.whxy]
-            else
-                collected = compute_meta(tmp)
-            end
-            -- Init stats.buffer[whxy]
-            if not stats.trusted[collected.whxy] and not stats.buffer[collected.whxy] then
-                stats.buffer[collected.whxy] = collected
-                if collected.is_known_ratio then
-                    collected.known_ratio_detected = 0
-                else
-                    collected.fallback_detected = 0
-                end
-            end
-            if stats.trusted[collected.whxy] and stats.trusted[collected.whxy].last_seen < 0 then
-                stats.trusted[collected.whxy].last_seen = 0
-            end
-            auto_adjust_limit()
-        end
-    else
-        -- TODO improve reset
-        -- Reset after inserting filter (table_.x=nil)
-        if collected.whxy and playback_time.current and playback_time.current > playback_time.insert then
-            state.pull = true
-            process_metadata("reset")
-        end
-        playback_time.insert = playback_time.current
-        collected = {}
-    end
-
-end
-
-function process_metadata(event)
+local function process_metadata(event)
     -- Event Race
     in_progress = true
 
@@ -485,6 +398,92 @@ function process_metadata(event)
     end
     -- print("Buffer:", buffer.time_total, buffer.index_total, "|", buffer.time_known, buffer.index_known_ratio)
     in_progress = false
+end
+
+local function update_playback_time(_, time)
+    playback_time.prev = playback_time.current
+    playback_time.current = time
+    if not playback_time.insert then playback_time.insert = playback_time.current end
+
+    if not in_progress and playback_time.insert and playback_time.current and playback_time.prev then
+        if collected.is_source and playback_time.current > playback_time.insert and limit.current < options.detect_limit then
+            process_metadata("source")
+            auto_adjust_limit()
+        elseif state.pull and stats.trusted[collected.whxy] and stats.trusted[collected.whxy].last_seen >= 0 and
+            playback_time.current >= playback_time.insert +
+            (options.fast_change_timer - stats.trusted[collected.whxy].last_seen) and applied.whxy ~= collected.whxy then
+            state.pull = false
+            process_metadata("fast change")
+        elseif state.pull and stats.buffer[collected.whxy] and stats.buffer[collected.whxy].is_known_ratio and
+            playback_time.current >= playback_time.insert +
+            (options.new_known_ratio_timer - stats.buffer[collected.whxy].known_ratio_detected) then
+            state.pull = false
+            process_metadata("know detected")
+        elseif state.pull and stats.buffer[collected.whxy] and not stats.buffer[collected.whxy].is_known_ratio and
+            playback_time.current >= playback_time.insert +
+            (options.new_fallback_timer - stats.buffer[collected.whxy].fallback_detected) then
+            state.pull = false
+            process_metadata("fallback detected")
+        elseif state.buffer_cycle and playback_time.current >=
+            (playback_time.insert + options.new_fallback_timer + options.deviation) then
+            state.buffer_cycle = false
+            stats.buffer = {}
+            buffer = {ordered = {}, time_total = 0, time_known = 0, index_total = 0, index_known_ratio = 0}
+            process_metadata("cycle buffer")
+        end
+        -- Reset limit
+        if (not state.pull or not state.buffer_cycle) and limit.current < options.detect_limit then
+            limit.current = options.detect_limit
+            insert_cropdetect_filter()
+        end
+    end
+end
+
+local function collect_metadata(_, table_)
+    -- Check the new metadata for availability and change
+    if table_ and table_["lavfi.cropdetect.w"] and table_["lavfi.cropdetect.h"] then
+        local tmp = {
+            w = tonumber(table_["lavfi.cropdetect.w"]),
+            h = tonumber(table_["lavfi.cropdetect.h"]),
+            x = tonumber(table_["lavfi.cropdetect.x"]),
+            y = tonumber(table_["lavfi.cropdetect.y"])
+        }
+        tmp.whxy = string.format("w=%s:h=%s:x=%s:y=%s", tmp.w, tmp.h, tmp.x, tmp.y)
+        if tmp.whxy ~= collected.whxy then
+            state.pull = true
+            state.buffer_cycle = true
+            if collected.whxy and playback_time.prev > playback_time.insert then process_metadata() end
+            if stats.trusted[tmp.whxy] then
+                collected = stats.trusted[tmp.whxy]
+            elseif stats.buffer[tmp.whxy] then
+                collected = stats.buffer[tmp.whxy]
+            else
+                collected = compute_meta(tmp)
+            end
+            -- Init stats.buffer[whxy]
+            if not stats.trusted[collected.whxy] and not stats.buffer[collected.whxy] then
+                stats.buffer[collected.whxy] = collected
+                if collected.is_known_ratio then
+                    collected.known_ratio_detected = 0
+                else
+                    collected.fallback_detected = 0
+                end
+            end
+            if stats.trusted[collected.whxy] and stats.trusted[collected.whxy].last_seen < 0 then
+                stats.trusted[collected.whxy].last_seen = 0
+            end
+            auto_adjust_limit()
+        end
+    else
+        -- TODO improve reset
+        -- Reset after inserting filter (table_.x=nil)
+        if collected.whxy and playback_time.current and playback_time.current > playback_time.insert then
+            state.pull = true
+            process_metadata("reset")
+        end
+        playback_time.insert = playback_time.current
+        collected = {}
+    end
 end
 
 local function seek(name)
