@@ -119,17 +119,18 @@ end
 
 local function compute_meta(meta)
     meta.whxy = string.format("w=%s:h=%s:x=%s:y=%s", meta.w, meta.h, meta.x, meta.y)
-    meta.is_source = meta.whxy == source.whxy
-    meta.is_invalid = meta.h < 0 or meta.w < 0
     meta.offset = {x = meta.x - (source.w - meta.w) / 2, y = meta.y - (source.h - meta.h) / 2}
     meta.mt, meta.mb = meta.y, source.h - meta.h - meta.y
     meta.ml, meta.mr = meta.x, source.w - meta.w - meta.x
+    meta.is_source = meta.whxy == source.whxy or meta.w == source.rw and meta.h == source.rh and meta.offset.x == 0 and
+                         meta.offset.y == 0
+    meta.is_invalid = meta.h < 0 or meta.w < 0
     -- Check aspect ratio
-    if not meta.is_invalid then
+    if not meta.is_invalid and meta.w >= source.w * .9 or meta.h >= source.h * .9 then
         for _, ratio in pairs(options.ratios) do
-            if math.floor(meta.w / ratio) % 2 == 0 and math.floor(meta.w / ratio) == meta.h or
-                math.floor(meta.w / ratio) % 2 == 1 and math.floor(meta.w / ratio) + 1 == meta.h then
-                -- if meta.h == math.floor(meta.w / ratio) or meta.h == math.ceil(meta.w / ratio) then
+            local height = math.floor((meta.w * 1 / ratio) + .5)
+            if height % 2 == 0 and height == meta.h or height % 2 == 1 and
+                (height + 1 == meta.h or height - 1 == meta.h) then
                 meta.is_known_ratio = true
                 break
             end
@@ -208,8 +209,7 @@ end
 local function is_trusted_margin(whxy)
     local data = {count = 0}
     for _, axis in pairs({"mt", "mb", "ml", "mr"}) do
-        data[axis] = math.max(collected[axis], stats.trusted[whxy][axis]) -
-                         math.min(collected[axis], stats.trusted[whxy][axis])
+        data[axis] = math.abs(collected[axis] - stats.trusted[whxy][axis])
         if data[axis] == 0 then data.count = data.count + 1 end
     end
     return data
@@ -286,14 +286,36 @@ local function process_metadata(event)
     buffer.time_known = string.format("%.3f", buffer.time_known) + elapsed_time
     buffer.index_total = buffer.index_total + 1
     buffer.index_known_ratio = buffer.index_known_ratio + 1
+    -- TODO if more than x different value
+    while buffer.time_known > options.new_known_ratio_timer + options.deviation do
+        local position = (buffer.index_total + 1) - buffer.index_known_ratio
+        local ref = buffer.ordered[position][1]
+        local buffer_time = buffer.ordered[position][2]
+        buffer.time_known = string.format("%.3f", buffer.time_known) - buffer_time
+        if stats.buffer[ref.whxy] and ref.is_known_ratio then
+            ref.known_ratio_detected = string.format("%.3f", ref.known_ratio_detected) - buffer_time
+            if ref.known_ratio_detected == 0 then stats.buffer[ref.whxy] = nil end
+        end
+        buffer.index_known_ratio = buffer.index_known_ratio - 1
+    end
+
+    while buffer.time_total > options.new_fallback_timer + options.deviation do
+        local ref = buffer.ordered[1][1]
+        if stats.buffer[ref.whxy] and not ref.is_known_ratio then
+            ref.fallback_detected = string.format("%.3f", ref.fallback_detected) - buffer.ordered[1][2]
+            if ref.fallback_detected == 0 then stats.buffer[ref.whxy] = nil end
+        end
+        buffer.time_total = string.format("%.3f", buffer.time_total) - buffer.ordered[1][2]
+        buffer.index_total = buffer.index_total - 1
+        table.remove(buffer.ordered, 1)
+    end
     -- print("Buffer:", buffer.time_total, buffer.index_total, "|", buffer.time_known, buffer.index_known_ratio)
 
     -- Check if a new meta can be approved
     local new_ready = stats.buffer[collected.whxy] and
-                          (stats.buffer[collected.whxy].is_known_ratio and
-                              stats.buffer[collected.whxy].known_ratio_detected >= options.new_known_ratio_timer or
-                              not stats.buffer[collected.whxy].is_known_ratio and options.new_fallback_timer > 0 and
-                              stats.buffer[collected.whxy].fallback_detected >= options.new_fallback_timer)
+                          (collected.is_known_ratio and collected.known_ratio_detected >= options.new_known_ratio_timer or
+                              not collected.is_known_ratio and options.new_fallback_timer > 0 and
+                              collected.fallback_detected >= options.new_fallback_timer)
 
     -- Add Trusted Offset
     if new_ready then
@@ -309,21 +331,29 @@ local function process_metadata(event)
     if not collected.is_invalid and stats.buffer[collected.whxy] and
         (collected.w > source.w * options.correction and collected.h > source.h * options.correction) then
         -- Find closest meta already applied
-        local closest = {}
+        local closest, in_between = {}, false
         for whxy in pairs(stats.trusted) do
             local diff = is_trusted_margin(whxy)
             -- print_debug(string.format("\\ Search %s, %s %s %s %s, %s", whxy, diff.mt, diff.mb, diff.ml, diff.mr,
             --   diff.count))
-            if not closest.whxy and diff.count >= 2 or closest.whxy and
-                (diff.count >= closest.count and diff.mt + diff.mb <= closest.mt + closest.mb and diff.ml + diff.mr <=
-                    closest.ml + closest.mr) then
+            -- Check if we have the same position between two set of margin
+            if closest.whxy and closest.whxy ~= whxy and diff.count == closest.count and math.abs(diff.mt - diff.mb) ==
+                math.abs(closest.mt - closest.mb) and math.abs(diff.ml - diff.mr) == math.abs(closest.ml - closest.mr) then
+                in_between = true
+                -- print_debug(string.format("\\ Cancel %s, in between.", closest.whxy))
+                break
+            end
+            if not closest.whxy and diff.count >= 2 or closest.whxy and diff.count >= closest.count and diff.mt +
+                diff.mb <= closest.mt + closest.mb and diff.ml + diff.mr <= closest.ml + closest.mr then
                 closest.mt, closest.mb, closest.ml, closest.mr = diff.mt, diff.mb, diff.ml, diff.mr
                 closest.count, closest.whxy = diff.count, whxy
                 -- print_debug(string.format("  \\ Find %s", closest.whxy))
             end
         end
         -- Check if the corrected data is already applied or flush it
-        if closest.whxy and closest.whxy ~= applied.whxy then corrected = stats.trusted[closest.whxy] end
+        if closest.whxy and not in_between and closest.whxy ~= applied.whxy then
+            corrected = stats.trusted[closest.whxy]
+        end
     end
 
     -- Use corrected metadata as main data
@@ -362,7 +392,8 @@ local function process_metadata(event)
             stats.trusted[current.whxy].applied = stats.trusted[current.whxy].applied + 1
         else
             stats.trusted[current.whxy] = current
-            current.applied, current.detected, current.last_seen = 1, 0, 0
+            current.applied, current.detected = 1, 0
+            current.last_seen = current.known_ratio_detected or current.fallback_detected
             current.fallback_detected, current.known_ratio_detected = nil, nil
             stats.buffer[current.whxy] = nil
         end
@@ -372,31 +403,6 @@ local function process_metadata(event)
         applied = current
         if options.mode < 3 then on_toggle(true) end
     end
-
-    -- Cleanup
-    -- TODO if more than x different value
-    while buffer.time_known > options.new_known_ratio_timer + options.deviation do
-        local position = (buffer.index_total + 1) - buffer.index_known_ratio
-        local ref = buffer.ordered[position][1]
-        local buffer_time = buffer.ordered[position][2]
-        buffer.time_known = string.format("%.3f", buffer.time_known) - buffer_time
-        if stats.buffer[ref.whxy] and ref.whxy.is_known_ratio then
-            ref.known_ratio_detected = string.format("%.3f", ref.whxy.known_ratio_detected) - buffer_time
-        end
-        buffer.index_known_ratio = buffer.index_known_ratio - 1
-    end
-
-    while buffer.time_total > options.new_fallback_timer + options.deviation do
-        local ref = buffer.ordered[1][1]
-        if stats.buffer[ref.whxy] and not ref.is_known_ratio then
-            ref.fallback_detected = string.format("%.3f", ref.fallback_detected) - buffer.ordered[1][2]
-            if ref.fallback_detected == 0 then stats.buffer[ref.whxy] = nil end
-        end
-        buffer.time_total = string.format("%.3f", buffer.time_total) - buffer.ordered[1][2]
-        buffer.index_total = buffer.index_total - 1
-        table.remove(buffer.ordered, 1)
-    end
-    -- print("Buffer:", buffer.time_total, buffer.index_total, "|", buffer.time_known, buffer.index_known_ratio)
     in_progress = false
 end
 
@@ -405,23 +411,20 @@ local function update_playback_time(_, time)
     playback_time.current = time
     if not playback_time.insert then playback_time.insert = playback_time.current end
 
-    if not in_progress and playback_time.insert and playback_time.current and playback_time.prev then
+    if not in_progress and playback_time.insert then
         if collected.is_source and playback_time.current > playback_time.insert and limit.current < options.detect_limit then
             process_metadata("source")
             auto_adjust_limit()
-        elseif state.pull and stats.trusted[collected.whxy] and stats.trusted[collected.whxy].last_seen >= 0 and
-            playback_time.current >= playback_time.insert +
-            (options.fast_change_timer - stats.trusted[collected.whxy].last_seen) and applied.whxy ~= collected.whxy then
+        elseif state.pull and stats.trusted[collected.whxy] and collected.last_seen >= 0 and playback_time.current >=
+            playback_time.insert + (options.fast_change_timer - collected.last_seen) and applied.whxy ~= collected.whxy then
             state.pull = false
             process_metadata("fast change")
-        elseif state.pull and stats.buffer[collected.whxy] and stats.buffer[collected.whxy].is_known_ratio and
-            playback_time.current >= playback_time.insert +
-            (options.new_known_ratio_timer - stats.buffer[collected.whxy].known_ratio_detected) then
+        elseif state.pull and stats.buffer[collected.whxy] and collected.is_known_ratio and playback_time.current >=
+            playback_time.insert + (options.new_known_ratio_timer - collected.known_ratio_detected) then
             state.pull = false
             process_metadata("know detected")
-        elseif state.pull and stats.buffer[collected.whxy] and not stats.buffer[collected.whxy].is_known_ratio and
-            playback_time.current >= playback_time.insert +
-            (options.new_fallback_timer - stats.buffer[collected.whxy].fallback_detected) then
+        elseif state.pull and stats.buffer[collected.whxy] and not collected.is_known_ratio and playback_time.current >=
+            playback_time.insert + (options.new_fallback_timer - collected.fallback_detected) then
             state.pull = false
             process_metadata("fallback detected")
         elseif state.buffer_cycle and playback_time.current >=
@@ -574,7 +577,12 @@ local function on_start()
     limit = {current = options.detect_limit, step = 1}
     collected, stats = {}, {trusted = {}, buffer = {}}
     trusted_offset = {x = {0}, y = {0}}
-    source = {w = mp.get_property_number("width"), h = mp.get_property_number("height"), x = 0, y = 0}
+    source = {
+        w = math.floor(mp.get_property_number("width") / options.detect_round) * options.detect_round,
+        h = math.floor(mp.get_property_number("height") / options.detect_round) * options.detect_round
+    }
+    source.x = (mp.get_property_number("width") - source.w) / 2
+    source.y = (mp.get_property_number("height") - source.h) / 2
     source = compute_meta(source)
     source.applied, source.detected, source.last_seen = 1, 0, 0
     stats.trusted[source.whxy] = source
