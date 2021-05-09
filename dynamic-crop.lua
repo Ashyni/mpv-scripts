@@ -47,7 +47,7 @@ local options = {
     fast_change_timer = 2,
     new_known_ratio_timer = 6,
     -- TODO ability to disable new_fallback_timer (= 0)
-    new_fallback_timer = 18, -- Has to be >= 'new_known_ratio_timer'
+    new_fallback_timer = 0, -- 0 to diable or has to be >= 'new_known_ratio_timer'
     ratios = {2.4, 2.39, 2.35, 2.2, 2, 1.85, 16 / 9, 1.5, 4 / 3, 1.25, 9 / 16},
     deviation = 1,
     correction = 0.6, -- 0.6 equivalent to 60%
@@ -81,6 +81,7 @@ local in_progress, seeking, paused, toggled, filter_missing, filter_removed
 local applied, buffer, collected, limit, source, stats, trusted_offset
 -- option
 local playback_time = {}
+local fallback = options.new_fallback_timer >= options.new_known_ratio_timer
 
 local function is_trusted_offset(offset, axis)
     for _, v in pairs(trusted_offset[axis]) do if offset == v then return true end end
@@ -131,11 +132,12 @@ local function compute_meta(meta)
             local height = math.floor((meta.w * 1 / ratio) + .5)
             if height % 2 == 0 and height == meta.h or height % 2 == 1 and
                 (height + 1 == meta.h or height - 1 == meta.h) then
-                meta.is_known_ratio = true
+                meta.known_ratio_detected = 0
                 break
             end
         end
     end
+    if not meta.known_ratio_detected and fallback then meta.fallback_detected = 0 end
     return meta
 end
 
@@ -268,15 +270,12 @@ local function process_metadata(event)
 
     -- Increase
     if stats.trusted[collected.whxy] then
-        stats.trusted[collected.whxy].detected = string.format("%.3f", stats.trusted[collected.whxy].detected) +
-                                                     elapsed_time
+        collected.detected = string.format("%.3f", collected.detected) + elapsed_time
     else
-        if stats.buffer[collected.whxy].is_known_ratio then
-            stats.buffer[collected.whxy].known_ratio_detected =
-                string.format("%.3f", stats.buffer[collected.whxy].known_ratio_detected) + elapsed_time
-        else
-            stats.buffer[collected.whxy].fallback_detected =
-                string.format("%.3f", stats.buffer[collected.whxy].fallback_detected) + elapsed_time
+        if collected.known_ratio_detected then
+            collected.known_ratio_detected = string.format("%.3f", collected.known_ratio_detected) + elapsed_time
+        elseif fallback then
+            collected.fallback_detected = string.format("%.3f", collected.fallback_detected) + elapsed_time
         end
     end
 
@@ -292,16 +291,18 @@ local function process_metadata(event)
         local ref = buffer.ordered[position][1]
         local buffer_time = buffer.ordered[position][2]
         buffer.time_known = string.format("%.3f", buffer.time_known) - buffer_time
-        if stats.buffer[ref.whxy] and ref.is_known_ratio then
+        if stats.buffer[ref.whxy] and ref.known_ratio_detected then
             ref.known_ratio_detected = string.format("%.3f", ref.known_ratio_detected) - buffer_time
             if ref.known_ratio_detected == 0 then stats.buffer[ref.whxy] = nil end
         end
         buffer.index_known_ratio = buffer.index_known_ratio - 1
     end
 
-    while buffer.time_total > options.new_fallback_timer + options.deviation do
+    local buffer_timer = options.new_fallback_timer
+    if not fallback then buffer_timer = options.new_known_ratio_timer end
+    while buffer.time_total > buffer_timer + options.deviation do
         local ref = buffer.ordered[1][1]
-        if stats.buffer[ref.whxy] and not ref.is_known_ratio then
+        if stats.buffer[ref.whxy] and ref.fallback_detected then
             ref.fallback_detected = string.format("%.3f", ref.fallback_detected) - buffer.ordered[1][2]
             if ref.fallback_detected == 0 then stats.buffer[ref.whxy] = nil end
         end
@@ -313,8 +314,8 @@ local function process_metadata(event)
 
     -- Check if a new meta can be approved
     local new_ready = stats.buffer[collected.whxy] and
-                          (collected.is_known_ratio and collected.known_ratio_detected >= options.new_known_ratio_timer or
-                              not collected.is_known_ratio and options.new_fallback_timer > 0 and
+                          (collected.known_ratio_detected and collected.known_ratio_detected >=
+                              options.new_known_ratio_timer or collected.fallback_detected and fallback and
                               collected.fallback_detected >= options.new_fallback_timer)
 
     -- Add Trusted Offset
@@ -328,14 +329,14 @@ local function process_metadata(event)
 
     -- Meta correction
     local corrected
-    if not collected.is_invalid and stats.buffer[collected.whxy] and
+    if not collected.is_invalid and not stats.trusted[collected.whxy] and
         (collected.w > source.w * options.correction and collected.h > source.h * options.correction) then
         -- Find closest meta already applied
         local closest, in_between = {}, false
         for whxy in pairs(stats.trusted) do
             local diff = is_trusted_margin(whxy)
             -- print_debug(string.format("\\ Search %s, %s %s %s %s, %s", whxy, diff.mt, diff.mb, diff.ml, diff.mr,
-            --   diff.count))
+                                    --   diff.count))
             -- Check if we have the same position between two set of margin
             if closest.whxy and closest.whxy ~= whxy and diff.count == closest.count and math.abs(diff.mt - diff.mb) ==
                 math.abs(closest.mt - closest.mb) and math.abs(diff.ml - diff.mr) == math.abs(closest.ml - closest.mr) then
@@ -392,7 +393,8 @@ local function process_metadata(event)
             stats.trusted[current.whxy].applied = stats.trusted[current.whxy].applied + 1
         else
             stats.trusted[current.whxy] = current
-            current.applied, current.detected = 1, 0
+            current.applied = 1
+            current.detected = current.known_ratio_detected or current.fallback_detected
             current.last_seen = current.known_ratio_detected or current.fallback_detected
             current.fallback_detected, current.known_ratio_detected = nil, nil
             stats.buffer[current.whxy] = nil
@@ -419,15 +421,15 @@ local function update_playback_time(_, time)
             playback_time.insert + (options.fast_change_timer - collected.last_seen) and applied.whxy ~= collected.whxy then
             state.pull = false
             process_metadata("fast change")
-        elseif state.pull and stats.buffer[collected.whxy] and collected.is_known_ratio and playback_time.current >=
+        elseif state.pull and stats.buffer[collected.whxy] and collected.known_ratio_detected and playback_time.current >=
             playback_time.insert + (options.new_known_ratio_timer - collected.known_ratio_detected) then
             state.pull = false
             process_metadata("know detected")
-        elseif state.pull and stats.buffer[collected.whxy] and not collected.is_known_ratio and playback_time.current >=
-            playback_time.insert + (options.new_fallback_timer - collected.fallback_detected) then
+        elseif fallback and state.pull and stats.buffer[collected.whxy] and collected.fallback_detected and
+            playback_time.current >= playback_time.insert + (options.new_fallback_timer - collected.fallback_detected) then
             state.pull = false
             process_metadata("fallback detected")
-        elseif state.buffer_cycle and playback_time.current >=
+        elseif state.buffer_cycle and fallback and playback_time.current >=
             (playback_time.insert + options.new_fallback_timer + options.deviation) then
             state.buffer_cycle = false
             stats.buffer = {}
@@ -464,16 +466,11 @@ local function collect_metadata(_, table_)
                 collected = compute_meta(tmp)
             end
             -- Init stats.buffer[whxy]
-            if not stats.trusted[collected.whxy] and not stats.buffer[collected.whxy] then
+            if not stats.trusted[collected.whxy] and not stats.buffer[collected.whxy] and
+                (collected.known_ratio_detected or collected.fallback_detected) then
                 stats.buffer[collected.whxy] = collected
-                if collected.is_known_ratio then
-                    collected.known_ratio_detected = 0
-                else
-                    collected.fallback_detected = 0
-                end
-            end
-            if stats.trusted[collected.whxy] and stats.trusted[collected.whxy].last_seen < 0 then
-                stats.trusted[collected.whxy].last_seen = 0
+            elseif stats.trusted[collected.whxy] and collected.last_seen < 0 then
+                collected.last_seen = 0
             end
             auto_adjust_limit()
         end
