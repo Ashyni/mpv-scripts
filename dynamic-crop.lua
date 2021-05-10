@@ -44,10 +44,9 @@ local options = {
     prevent_change_timer = 0,
     prevent_change_mode = 2,
     resize_windowed = true,
-    fast_change_timer = 2,
+    fast_change_timer = 1,
     new_known_ratio_timer = 6,
-    -- TODO ability to disable new_fallback_timer (= 0)
-    new_fallback_timer = 0, -- 0 to diable or has to be >= 'new_known_ratio_timer'
+    new_fallback_timer = 0, -- 0 to disable or has to be >= 'new_known_ratio_timer'
     ratios = {2.4, 2.39, 2.35, 2.2, 2, 1.85, 16 / 9, 1.5, 4 / 3, 1.25, 9 / 16},
     deviation = 1,
     correction = 0.6, -- 0.6 equivalent to 60%
@@ -219,15 +218,18 @@ end
 
 local function auto_adjust_limit()
     -- Auto adjust black threshold and detect_seconds
+    limit.last = limit.change
     local limit_current = limit.current
     if collected.is_source then
         -- Increase limit
+        limit.change = 1
         if limit.current + limit.step * 2 <= options.detect_limit then
             limit.current = limit.current + limit.step * 2
         else
             limit.current = options.detect_limit
         end
     else
+        limit.change = -1
         local trusted_margin
         for whxy in pairs(stats.trusted) do
             if stats.trusted[whxy] then
@@ -250,10 +252,9 @@ local function auto_adjust_limit()
 end
 
 local function process_metadata(event)
-    -- Event Race
+    -- Prevent Event Race
     in_progress = true
 
-    -- print(playback_time.prev == playback_time.insert, playback_time.prev, playback_time.insert)
     if seeking or paused or toggled then
         in_progress = false
         return
@@ -268,7 +269,7 @@ local function process_metadata(event)
     playback_time.insert = time
     -- print_debug("detail", "Collected", collected)
 
-    -- Increase
+    -- Increase detected time
     if stats.trusted[collected.whxy] then
         collected.detected = string.format("%.3f", collected.detected) + elapsed_time
     else
@@ -336,7 +337,7 @@ local function process_metadata(event)
         for whxy in pairs(stats.trusted) do
             local diff = is_trusted_margin(whxy)
             -- print_debug(string.format("\\ Search %s, %s %s %s %s, %s", whxy, diff.mt, diff.mb, diff.ml, diff.mr,
-                                    --   diff.count))
+            --   diff.count))
             -- Check if we have the same position between two set of margin
             if closest.whxy and closest.whxy ~= whxy and diff.count == closest.count and math.abs(diff.mt - diff.mb) ==
                 math.abs(closest.mt - closest.mb) and math.abs(diff.ml - diff.mr) == math.abs(closest.ml - closest.mr) then
@@ -376,7 +377,8 @@ local function process_metadata(event)
     end
 
     local detect_source = current.is_source and
-                              (not corrected and stats.trusted[current.whxy].last_seen >= options.fast_change_timer)
+                              (not corrected and limit.last == 1 or stats.trusted[current.whxy].last_seen >=
+                                  options.fast_change_timer)
     local trusted_offset_y = is_trusted_offset(current.offset.y, "y")
     local trusted_offset_x = is_trusted_offset(current.offset.x, "x")
 
@@ -409,38 +411,38 @@ local function process_metadata(event)
 end
 
 local function update_playback_time(_, time)
+    if not time or in_progress or not collected.whxy then return end
+
     playback_time.prev = playback_time.current
     playback_time.current = time
-    if not playback_time.insert then playback_time.insert = playback_time.current end
+    if not playback_time.insert then playback_time.insert = time end
 
-    if not in_progress and playback_time.insert then
-        if collected.is_source and playback_time.current > playback_time.insert and limit.current < options.detect_limit then
-            process_metadata("source")
-            auto_adjust_limit()
-        elseif state.pull and stats.trusted[collected.whxy] and collected.last_seen >= 0 and playback_time.current >=
-            playback_time.insert + (options.fast_change_timer - collected.last_seen) and applied.whxy ~= collected.whxy then
-            state.pull = false
-            process_metadata("fast change")
-        elseif state.pull and stats.buffer[collected.whxy] and collected.known_ratio_detected and playback_time.current >=
-            playback_time.insert + (options.new_known_ratio_timer - collected.known_ratio_detected) then
-            state.pull = false
-            process_metadata("know detected")
-        elseif fallback and state.pull and stats.buffer[collected.whxy] and collected.fallback_detected and
-            playback_time.current >= playback_time.insert + (options.new_fallback_timer - collected.fallback_detected) then
-            state.pull = false
-            process_metadata("fallback detected")
-        elseif state.buffer_cycle and fallback and playback_time.current >=
-            (playback_time.insert + options.new_fallback_timer + options.deviation) then
-            state.buffer_cycle = false
-            stats.buffer = {}
-            buffer = {ordered = {}, time_total = 0, time_known = 0, index_total = 0, index_known_ratio = 0}
-            process_metadata("cycle buffer")
-        end
-        -- Reset limit
-        if (not state.pull or not state.buffer_cycle) and limit.current < options.detect_limit then
-            limit.current = options.detect_limit
-            insert_cropdetect_filter()
-        end
+    if collected.is_source and playback_time.current > playback_time.insert and collected ~= applied --[[ and limit.current < options.detect_limit ]] then
+        process_metadata("source")
+        auto_adjust_limit()
+    elseif state.pull and stats.trusted[collected.whxy] and collected.last_seen >= 0 and playback_time.current >=
+        playback_time.insert + (options.fast_change_timer - collected.last_seen) and applied.whxy ~= collected.whxy then
+        state.pull = false
+        process_metadata("fast change")
+    elseif state.pull and stats.buffer[collected.whxy] and collected.known_ratio_detected and playback_time.current >=
+        playback_time.insert + (options.new_known_ratio_timer - collected.known_ratio_detected) then
+        state.pull = false
+        process_metadata("know detected")
+    elseif fallback and state.pull and stats.buffer[collected.whxy] and collected.fallback_detected and
+        playback_time.current >= playback_time.insert + (options.new_fallback_timer - collected.fallback_detected) then
+        state.pull = false
+        process_metadata("fallback detected")
+    elseif state.buffer_cycle and fallback and playback_time.current >=
+        (playback_time.insert + options.new_fallback_timer + options.deviation) then
+        state.buffer_cycle = false
+        stats.buffer = {}
+        buffer = {ordered = {}, time_total = 0, time_known = 0, index_total = 0, index_known_ratio = 0}
+        process_metadata("cycle buffer")
+    end
+    -- Reset limit
+    if (not state.pull or not state.buffer_cycle) and limit.current < options.detect_limit then
+        limit.current = options.detect_limit
+        insert_cropdetect_filter()
     end
 end
 
