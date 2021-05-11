@@ -46,7 +46,7 @@ local options = {
     resize_windowed = true,
     fast_change_timer = 1,
     new_known_ratio_timer = 6,
-    new_fallback_timer = 0, -- 0 to disable or has to be >= 'new_known_ratio_timer'
+    new_fallback_timer = 12, -- 0 to disable or has to be >= 'new_known_ratio_timer'
     ratios = {2.4, 2.39, 2.35, 2.2, 2, 1.85, 16 / 9, 1.5, 4 / 3, 1.25, 9 / 16},
     deviation = 1,
     correction = 0.6, -- 0.6 equivalent to 60%
@@ -365,6 +365,19 @@ local function process_metadata(event)
         current = corrected
     end
 
+    -- Stabilization
+    local stabilization
+    if stats.trusted[current.whxy] then
+        for _, table_ in pairs(stats.trusted) do
+            if current ~= table_ then
+                if (not stabilization and table_.detected > current.detected or stabilization and table_.detected >
+                    stabilization.detected) and math.abs(current.w - table_.w) <= 4 and math.abs(current.h - table_.h) <=
+                    4 then stabilization = table_ end
+            end
+        end
+    end
+    if stabilization then current = stabilization end
+
     -- Cycle last_seen
     for whxy in pairs(stats.trusted) do
         if whxy ~= current.whxy then
@@ -417,7 +430,7 @@ local function update_playback_time(_, time)
     playback_time.current = time
     if not playback_time.insert then playback_time.insert = time end
 
-    if collected.is_source and playback_time.current > playback_time.insert and collected ~= applied --[[ and limit.current < options.detect_limit ]] then
+    if collected.is_source and playback_time.current > playback_time.insert and collected ~= applied then
         process_metadata("source")
         auto_adjust_limit()
     elseif state.pull and stats.trusted[collected.whxy] and collected.last_seen >= 0 and playback_time.current >=
@@ -459,7 +472,9 @@ local function collect_metadata(_, table_)
         if tmp.whxy ~= collected.whxy then
             state.pull = true
             state.buffer_cycle = true
-            if collected.whxy and playback_time.prev > playback_time.insert then process_metadata() end
+            if collected.whxy and playback_time.prev and playback_time.prev > playback_time.insert then
+                process_metadata()
+            end
             if stats.trusted[tmp.whxy] then
                 collected = stats.trusted[tmp.whxy]
             elseif stats.buffer[tmp.whxy] then
