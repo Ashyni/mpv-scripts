@@ -14,10 +14,6 @@ The default options can be overridden by adding script-opts-append=autocrop-<par
 
 List of available parameters (For default values, see <options>)：
 
-mode: [0-4] - 0 disable, 1 on-demand, 2 single-start, 3 auto-manual, 4 auto-start
-
-start_delay: seconds - Delay use by mode = 2 (single-start), to skip intro.
-
 prevent_change_mode: [0-2] - 0 any, 1 keep-largest, 2 keep-lowest - The prevent_change_timer is trigger after a change,
     to disable this, set prevent_change_timer to 0.
 
@@ -29,32 +25,28 @@ deviation: seconds - Extra time may deviate from the majority collected to appro
 
 correction: [0.0-1] - Size minimum of collected meta (in percent based on source), to attempt a correction.
     to disable this, set 1.
-
-detect_limit, detect_round, detect_seconds: See https://ffmpeg.org/ffmpeg-filters.html#cropdetect
-    other option for this filter: skip (new 12/2020), reset
-detect_reset: [0-1] - 1, will try to find cropping metadata before watermark/logo.
 ]] --
 require "mp.msg"
 require "mp.options"
 
 local options = {
     -- behavior
-    mode = 4,
-    start_delay = 0,
-    prevent_change_timer = 0,
+    mode = 4, -- [0-4] 0 disable, 1 on-demand, 2 single-start, 3 auto-manual, 4 auto-start.
+    start_delay = 0, -- Delay in seconds used to skip intro for mode 2 (single-start).
+    prevent_change_timer = 0, -- TODO re implement
     prevent_change_mode = 2,
     resize_windowed = true,
     fast_change_timer = 1,
     new_known_ratio_timer = 6,
-    new_fallback_timer = 12, -- 0 to disable or has to be >= 'new_known_ratio_timer'
+    new_fallback_timer = 0, -- 0 disable or >= 'new_known_ratio_timer'.
     ratios = {2.4, 2.39, 2.35, 2.2, 2, 1.85, 16 / 9, 1.5, 4 / 3, 1.25, 9 / 16},
-    deviation = 1,
-    correction = 0.6, -- 0.6 equivalent to 60%
-    -- ffmpeg-filter
+    deviation = 1, -- 0 for approved only a continuous metadata.
+    correction = 0.6, -- 0.6 equivalent to 60%.
+    -- filter, see https://ffmpeg.org/ffmpeg-filters.html#cropdetect for details.
     detect_limit = 24,
     detect_round = 2,
-    detect_reset = 1,
-    detect_skip = 0,
+    detect_reset = 1, -- minimum 1.
+    detect_skip = 0, -- new ffmpeg build since 12/2020.
     -- verbose
     debug = true
 }
@@ -79,7 +71,7 @@ local in_progress, seeking, paused, toggled, filter_missing, filter_removed
 -- Init on_start()
 local applied, buffer, collected, limit, source, stats, trusted_offset
 -- option
-local playback_time = {}
+local time_pos = {}
 local fallback = options.new_fallback_timer >= options.new_known_ratio_timer
 
 local function is_trusted_offset(offset, axis)
@@ -216,11 +208,11 @@ local function is_trusted_margin(whxy)
     return data
 end
 
-local function auto_adjust_limit()
+local function auto_adjust_limit(meta)
     -- Auto adjust black threshold and detect_seconds
     limit.last = limit.change
     local limit_current = limit.current
-    if collected.is_source then
+    if meta.is_source then
         -- Increase limit
         limit.change = 1
         if limit.current + limit.step * 2 <= options.detect_limit then
@@ -231,13 +223,13 @@ local function auto_adjust_limit()
     else
         limit.change = -1
         local trusted_margin
-        for whxy in pairs(stats.trusted) do
+        for whxy, table_ in pairs(stats.trusted) do
             if stats.trusted[whxy] then
                 local diff = is_trusted_margin(whxy)
                 if diff.count >= 2 then trusted_margin = true end
             end
         end
-        local low_collected = collected.w < source.w * options.correction or collected.h < source.h * options.correction
+        local low_collected = meta.w < source.w * options.correction or meta.h < source.h * options.correction
         if limit.current > 0 and (not trusted_margin or low_collected) then
             -- Decrease limit
             if limit.current - limit.step >= 0 then
@@ -261,12 +253,12 @@ local function process_metadata(event)
     end
 
     -- Time elapsed
-    local time = playback_time.prev
-    if event then time = playback_time.current end
+    local time = time_pos.prev
+    if event then time = time_pos.current end
 
-    local elapsed_time = string.format("%.3f", time - playback_time.insert)
+    local elapsed_time = string.format("%.3f", time - time_pos.insert)
     print("Playback time:", elapsed_time, collected.whxy, limit.current, event)
-    playback_time.insert = time
+    time_pos.insert = time
     -- print_debug("detail", "Collected", collected)
 
     -- Increase detected time
@@ -367,7 +359,7 @@ local function process_metadata(event)
 
     -- Stabilization
     local stabilization
-    if stats.trusted[current.whxy] then
+    if not current.is_source and stats.trusted[current.whxy] then
         for _, table_ in pairs(stats.trusted) do
             if current ~= table_ then
                 if (not stabilization and table_.detected > current.detected or stabilization and table_.detected >
@@ -420,33 +412,37 @@ local function process_metadata(event)
         applied = current
         if options.mode < 3 then on_toggle(true) end
     end
+
+    if corrected and corrected.is_source then
+        auto_adjust_limit(corrected)
+    end
     in_progress = false
 end
 
-local function update_playback_time(_, time)
+local function update_time_pos(_, time)
     if not time or in_progress or not collected.whxy then return end
 
-    playback_time.prev = playback_time.current
-    playback_time.current = time
-    if not playback_time.insert then playback_time.insert = time end
+    time_pos.prev = time_pos.current
+    time_pos.current = time
+    if not time_pos.insert then time_pos.insert = time end
 
-    if collected.is_source and playback_time.current > playback_time.insert and collected ~= applied then
+    if collected.is_source and time_pos.current > time_pos.insert and collected ~= applied then
         process_metadata("source")
-        auto_adjust_limit()
-    elseif state.pull and stats.trusted[collected.whxy] and collected.last_seen >= 0 and playback_time.current >=
-        playback_time.insert + (options.fast_change_timer - collected.last_seen) and applied.whxy ~= collected.whxy then
+        auto_adjust_limit(collected)
+    elseif state.pull and stats.trusted[collected.whxy] and collected.last_seen >= 0 and time_pos.current >=
+        time_pos.insert + (options.fast_change_timer - collected.last_seen) and applied.whxy ~= collected.whxy then
         state.pull = false
         process_metadata("fast change")
-    elseif state.pull and stats.buffer[collected.whxy] and collected.known_ratio_detected and playback_time.current >=
-        playback_time.insert + (options.new_known_ratio_timer - collected.known_ratio_detected) then
+    elseif state.pull and stats.buffer[collected.whxy] and collected.known_ratio_detected and time_pos.current >=
+        time_pos.insert + (options.new_known_ratio_timer - collected.known_ratio_detected) then
         state.pull = false
         process_metadata("know detected")
-    elseif fallback and state.pull and stats.buffer[collected.whxy] and collected.fallback_detected and
-        playback_time.current >= playback_time.insert + (options.new_fallback_timer - collected.fallback_detected) then
+    elseif fallback and state.pull and stats.buffer[collected.whxy] and collected.fallback_detected and time_pos.current >=
+        time_pos.insert + (options.new_fallback_timer - collected.fallback_detected) then
         state.pull = false
         process_metadata("fallback detected")
-    elseif state.buffer_cycle and fallback and playback_time.current >=
-        (playback_time.insert + options.new_fallback_timer + options.deviation) then
+    elseif state.buffer_cycle and fallback and time_pos.current >=
+        (time_pos.insert + options.new_fallback_timer + options.deviation) then
         state.buffer_cycle = false
         stats.buffer = {}
         buffer = {ordered = {}, time_total = 0, time_known = 0, index_total = 0, index_known_ratio = 0}
@@ -472,9 +468,7 @@ local function collect_metadata(_, table_)
         if tmp.whxy ~= collected.whxy then
             state.pull = true
             state.buffer_cycle = true
-            if collected.whxy and playback_time.prev and playback_time.prev > playback_time.insert then
-                process_metadata()
-            end
+            if collected.whxy and time_pos.prev and time_pos.prev > time_pos.insert then process_metadata() end
             if stats.trusted[tmp.whxy] then
                 collected = stats.trusted[tmp.whxy]
             elseif stats.buffer[tmp.whxy] then
@@ -489,16 +483,16 @@ local function collect_metadata(_, table_)
             elseif stats.trusted[collected.whxy] and collected.last_seen < 0 then
                 collected.last_seen = 0
             end
-            auto_adjust_limit()
+            auto_adjust_limit(collected)
         end
     else
         -- TODO improve reset
         -- Reset after inserting filter (table_.x=nil)
-        if collected.whxy and playback_time.current and playback_time.current > playback_time.insert then
+        if collected.whxy and time_pos.current and time_pos.current > time_pos.insert then
             state.pull = true
             process_metadata("reset")
         end
-        playback_time.insert = playback_time.current
+        time_pos.insert = time_pos.current
         collected = {}
     end
 end
@@ -506,7 +500,7 @@ end
 local function seek(name)
     print_debug(string.format("Stop by %s event.", name))
     remove_filter(labels.cropdetect)
-    playback_time = {}
+    time_pos = {}
     collected = {}
 end
 
@@ -518,7 +512,7 @@ end
 local function seek_event(event, id, error)
     print_debug(string.format("Stop by %s event.", event["event"]))
     if not paused then
-        playback_time = {}
+        time_pos = {}
         collected = {}
     end
     seeking = true
@@ -571,7 +565,7 @@ function cleanup()
     mp.msg.info("Cleanup.")
     -- Unregister Events
     mp.unobserve_property(osd_size_change)
-    mp.unobserve_property(update_playback_time)
+    mp.unobserve_property(update_time_pos)
     mp.unobserve_property(collect_metadata)
     mp.unregister_event(seek_event)
     mp.unregister_event(resume_event)
@@ -601,10 +595,10 @@ local function on_start()
     source.applied, source.detected, source.last_seen = 1, 0, 0
     stats.trusted[source.whxy] = source
     applied = source
-    playback_time.current = mp.get_property_number("time-pos")
+    time_pos.current = mp.get_property_number("time-pos")
     -- Register Events
     mp.observe_property("osd-dimensions", "native", osd_size_change)
-    mp.observe_property("time-pos", "number", update_playback_time)
+    mp.observe_property("time-pos", "number", update_time_pos)
     mp.observe_property(string.format("vf-metadata/%s", labels.cropdetect), "native", collect_metadata)
     mp.register_event("seek", seek_event)
     mp.register_event("playback-restart", resume_event)
