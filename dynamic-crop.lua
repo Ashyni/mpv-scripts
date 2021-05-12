@@ -73,6 +73,7 @@ local applied, buffer, collected, limit, source, stats, trusted_offset
 -- option
 local time_pos = {}
 local fallback = options.new_fallback_timer >= options.new_known_ratio_timer
+local cropdetect_skip = string.format(":skip=%d", options.detect_skip)
 
 local function is_trusted_offset(offset, axis)
     for _, v in pairs(trusted_offset[axis]) do if offset == v then return true end end
@@ -93,15 +94,20 @@ end
 
 local function insert_cropdetect_filter()
     -- "vf pre" cropdetect / "vf append" crop, to be sure of the order of the chain filters
-    local command = mp.command(string.format(
-                                   "no-osd vf pre @%s:lavfi-cropdetect=limit=%d/255:round=%d:reset=%d:skip=%d",
-                                   labels.cropdetect, limit.current, options.detect_round, options.detect_reset,
-                                   options.detect_skip))
-    if not command then
-        mp.msg.error("Does vf=help as #1 line in mvp.conf return libavfilter list with crop/cropdetect in log?")
-        filter_missing = true
-        cleanup()
-        return
+    local function command()
+        return mp.command(string.format("no-osd vf pre @%s:lavfi-cropdetect=limit=%d/255:round=%d:reset=%d%s",
+                                        labels.cropdetect, limit.current, options.detect_round, options.detect_reset,
+                                        cropdetect_skip))
+    end
+
+    if not command() then
+        cropdetect_skip = ""
+        if not command() then
+            mp.msg.error("Does vf=help as #1 line in mvp.conf return libavfilter list with crop/cropdetect in log?")
+            filter_missing = true
+            cleanup()
+            return
+        end
     end
 end
 
@@ -413,9 +419,7 @@ local function process_metadata(event)
         if options.mode < 3 then on_toggle(true) end
     end
 
-    if corrected and corrected.is_source then
-        auto_adjust_limit(corrected)
-    end
+    if corrected and corrected.is_source then auto_adjust_limit(corrected) end
     in_progress = false
 end
 
