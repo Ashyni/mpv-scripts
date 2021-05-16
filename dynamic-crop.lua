@@ -23,7 +23,7 @@ resize_windowed: [true/false] - False, prevents the window from being resized, b
 deviation: seconds - Extra time may deviate from the majority collected to approve a new metadata (to validate: 6/6+2).
     to disable this, set 0.
 
-correction: [0-1] - Size minimum of collected meta (in percent based on source), to attempt a correction.
+correction: [0.0-1] - Size minimum of collected meta (in percent based on source), to attempt a correction.
     to disable this, set 1.
 ]] --
 require "mp.msg"
@@ -33,7 +33,7 @@ local options = {
     -- behavior
     mode = 4, -- [0-4] 0 disable, 1 on-demand, 2 single-start, 3 auto-manual, 4 auto-start.
     start_delay = 0, -- Delay in seconds used to skip intro for mode 2 (single-start).
-    prevent_change_timer = 0, -- TODO re implement
+    prevent_change_timer = 0,
     prevent_change_mode = 2,
     resize_windowed = true,
     fast_change_timer = 1,
@@ -370,9 +370,18 @@ local function process_metadata(event, time_pos_)
             current.applied, current.last_seen = 1, current.detected_total
             stats.buffer[current.whxy] = nil
         end
-        osd_size_change(current.w > current.h)
-        mp.command(string.format("no-osd vf append @%s:lavfi-crop=%s", labels.crop, current.whxy))
-        print_debug(string.format("- Apply: %s", current.whxy))
+        if not time_pos.prevent or time_pos_ >= time_pos.prevent then
+            osd_size_change(current.w > current.h)
+            mp.command(string.format("no-osd vf append @%s:lavfi-crop=%s", labels.crop, current.whxy))
+            print_debug(string.format("- Apply: %s", current.whxy))
+            time_pos.prevent = nil
+            if options.prevent_change_timer > 0 and
+                (options.prevent_change_mode == 1 and (current.w > applied.w or current.h > applied.h) or
+                    options.prevent_change_mode == 2 and (current.w < applied.w or current.h < applied.h) or
+                    options.prevent_change_mode == 0) then
+                time_pos.prevent = compute_float(time_pos_, options.prevent_change_timer, true)
+            end
+        end
         applied = current
         if options.mode < 3 then on_toggle(true) end
     end
