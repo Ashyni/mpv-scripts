@@ -38,7 +38,7 @@ local options = {
     resize_windowed = true,
     fast_change_timer = 1,
     new_known_ratio_timer = 5,
-    new_fallback_timer = 15, -- 0 disable or >= 'new_known_ratio_timer'.
+    new_fallback_timer = 20, -- 0 disable or >= 'new_known_ratio_timer'.
     ratios = {2.4, 2.39, 2.35, 2.2, 2, 1.85, 16 / 9, 1.5, 4 / 3, 1.25, 9 / 16},
     deviation = 1, -- 0 for approved only a continuous metadata.
     correction = 0.6, -- 0.6 equivalent to 60%.
@@ -66,8 +66,7 @@ local labels = {
     cropdetect = string.format("%s-cropdetect", label_prefix)
 }
 -- state
-local state = {}
-local in_progress, seeking, paused, toggled, filter_missing, filter_removed
+local in_progress, seeking, paused, toggled, filter_missing, filter_inserted
 -- Init on_start()
 local applied, buffer, collected, last_collected, limit, source, stats
 -- option
@@ -92,14 +91,18 @@ local function is_cropable()
     return vid and not is_album
 end
 
+local function remove_filter(label)
+    if is_filter_present(label) then mp.command(string.format("no-osd vf remove @%s", label)) end
+end
+
 local function insert_cropdetect_filter()
+    if toggled or paused or seeking then return end
     -- "vf pre" cropdetect / "vf append" crop, to be sure of the order of the chain filters
     local function command()
         return mp.command(string.format("no-osd vf pre @%s:lavfi-cropdetect=limit=%d/255:round=%d:reset=%d%s",
                                         labels.cropdetect, limit.current, options.detect_round, options.detect_reset,
                                         cropdetect_skip))
     end
-
     if not command() then
         cropdetect_skip = ""
         if not command() then
@@ -109,11 +112,7 @@ local function insert_cropdetect_filter()
             return
         end
     end
-    state.insert = true
-end
-
-local function remove_filter(label)
-    if is_filter_present(label) then mp.command(string.format("no-osd vf remove @%s", label)) end
+    filter_inserted = true
 end
 
 local function compute_meta(meta)
@@ -158,10 +157,13 @@ local function osd_size_change(orientation)
     end
 end
 
-local function print_debug(type_, label, meta)
-    if options.debug and type_ == "detail" then
-        print(string.format("%s, %s | Offset X:%s Y:%s | limit:%s", label, meta.whxy, meta.offset.x, meta.offset.y,
-                            limit.current))
+local function print_debug(meta, type_, label)
+    if options.debug then
+        if type_ == "detail" then
+            print(string.format("%s, %s | Offset X:%s Y:%s | limit:%s", label, meta.whxy, meta.offset.x, meta.offset.y,
+                                limit.current))
+        end
+        if not type_ then print(meta) end
     end
     -- Debug Stats
     if type_ == "stats" and stats.trusted then
@@ -250,7 +252,7 @@ local function process_metadata(event, time_pos_)
     in_progress = true
 
     local elapsed_time = compute_float(time_pos_, time_pos.insert, false)
-    print_debug("detail", "Collected", collected)
+    print_debug(collected, "detail", "Collected")
     time_pos.insert = time_pos_
 
     -- Increase detected_total time
@@ -270,13 +272,13 @@ local function process_metadata(event, time_pos_)
     if buffer.index_known_ratio > 0 then buffer.time_known = compute_float(buffer.time_known, elapsed_time, true) end
 
     -- Check if a new meta can be approved
+    -- TODO add last time_pos in buffer.ordered[i][3]
     local new_ready = stats.buffer[collected.whxy] and
                           (collected.is_known_ratio and collected.detected_total >= options.new_known_ratio_timer or
                               fallback and not collected.is_known_ratio and collected.detected_total >=
                               options.new_fallback_timer)
 
     -- Add Trusted Offset
-    -- TODO add last time_pos in buffer.ordered[i][3]
     if new_ready then
         local add_new_offset = {}
         for _, axis in pairs({"x", "y"}) do
@@ -309,7 +311,7 @@ local function process_metadata(event, time_pos_)
                 -- print_debug(string.format("  \\ Find %s", closest.whxy))
             end
         end
-        -- Check if the corrected data is already applied or flush it
+        -- Check if the corrected data is already applied
         if closest.whxy and not in_between and closest.whxy ~= applied.whxy then
             corrected = stats.trusted[closest.whxy]
         end
@@ -332,9 +334,9 @@ local function process_metadata(event, time_pos_)
     end
     if stabilization then
         current = stabilization
-        print_debug("detail", "\\ Stabilization", current)
+        print_debug(current, "detail", "\\ Stabilization")
     elseif corrected then
-        print_debug("detail", "\\ Corrected", current)
+        print_debug(current, "detail", "\\ Corrected")
     end
 
     -- Cycle last_seen
@@ -348,19 +350,17 @@ local function process_metadata(event, time_pos_)
         end
     end
 
+    -- Crop Filter
     local detect_source = current.is_source and
                               (not corrected and last_collected == collected and limit.change == 1 or current.last_seen >=
                                   options.fast_change_timer)
     local trusted_offset_y = is_trusted_offset(current.offset.y, "y")
     local trusted_offset_x = is_trusted_offset(current.offset.x, "x")
-
-    -- Crop Filter
     local confirmation = not current.is_source and
                              (stats.trusted[current.whxy] and current.last_seen >= options.fast_change_timer or
                                  new_ready)
     local crop_filter = not collected.is_invalid and applied.whxy ~= current.whxy and trusted_offset_x and
                             trusted_offset_y and (confirmation or detect_source)
-
     if crop_filter then
         -- Apply cropping
         if stats.trusted[current.whxy] then
@@ -374,12 +374,13 @@ local function process_metadata(event, time_pos_)
             osd_size_change(current.w > current.h)
             mp.command(string.format("no-osd vf append @%s:lavfi-crop=%s", labels.crop, current.whxy))
             print_debug(string.format("- Apply: %s", current.whxy))
-            time_pos.prevent = nil
-            if options.prevent_change_timer > 0 and
-                (options.prevent_change_mode == 1 and (current.w > applied.w or current.h > applied.h) or
+            if options.prevent_change_timer > 0 then
+                time_pos.prevent = nil
+                if (options.prevent_change_mode == 1 and (current.w > applied.w or current.h > applied.h) or
                     options.prevent_change_mode == 2 and (current.w < applied.w or current.h < applied.h) or
                     options.prevent_change_mode == 0) then
-                time_pos.prevent = compute_float(time_pos_, options.prevent_change_timer, true)
+                    time_pos.prevent = compute_float(time_pos_, options.prevent_change_timer, true)
+                end
             end
         end
         applied = current
@@ -430,11 +431,12 @@ local function update_time_pos(_, time_pos_)
     time_pos.current = tonumber(string.format("%.3f", time_pos_))
     if not time_pos.insert then time_pos.insert = time_pos.current end
 
-    if not in_progress and collected.whxy and time_pos.prev and not state.insert and not (seeking or paused or toggled) then
-        process_metadata("time_pos", time_pos.current)
-        collectgarbage("step")
-        in_progress = false
-    end
+    if in_progress or not collected.whxy or not time_pos.prev or filter_inserted or seeking or paused or toggled or
+        options.mode == 2 and time_pos_ < options.start_delay then return end
+
+    process_metadata("time_pos", time_pos.current)
+    collectgarbage("step")
+    in_progress = false
 end
 
 local function collect_metadata(_, table_)
@@ -463,67 +465,74 @@ local function collect_metadata(_, table_)
                 collected.last_seen = 0
             end
         end
-        state.insert = false
+        filter_inserted = false
+    end
+end
+
+local function observe_main_event(observe)
+    if observe then
+        mp.observe_property(string.format("vf-metadata/%s", labels.cropdetect), "native", collect_metadata)
+        mp.observe_property("time-pos", "number", update_time_pos)
+        insert_cropdetect_filter()
+    else
+        mp.unobserve_property(update_time_pos)
+        mp.unobserve_property(collect_metadata)
+        remove_filter(labels.cropdetect)
     end
 end
 
 local function seek(name)
     print_debug(string.format("Stop by %s event.", name))
-    remove_filter(labels.cropdetect)
+    observe_main_event(false)
     time_pos = {}
     collected = {}
 end
 
 local function resume(name)
     print_debug(string.format("Resume by %s event.", name))
-    insert_cropdetect_filter()
+    observe_main_event(true)
 end
 
 local function seek_event(event, id, error)
-    print_debug(string.format("Stop by %s event.", event["event"]))
+    seeking = true
     if not paused then
+        print_debug(string.format("Stop by %s event.", event["event"]))
         time_pos = {}
         collected = {}
     end
-    seeking = true
 end
 
 local function resume_event(event, id, error)
-    print_debug(string.format("Resume by %s event.", event["event"]))
+    if not paused then print_debug(string.format("Resume by %s event.", event["event"])) end
     seeking = false
 end
 
-function on_toggle(mode)
+function on_toggle(auto)
     if filter_missing then
         mp.osd_message("Libavfilter cropdetect missing", 3)
         return
     end
-    if is_filter_present(labels.crop) and (filter_removed or options.mode >= 3) then
+    if is_filter_present(labels.crop) and not is_filter_present(labels.cropdetect) then
         remove_filter(labels.crop)
-        remove_filter(labels.cropdetect)
         applied = source
-        if options.mode <= 2 then
-            filter_removed = false
-            return
-        end
+        return
     end
     if not toggled then
+        seek("toggle")
+        if not auto then mp.osd_message(string.format("%s paused.", label_prefix), 3) end
         toggled = true
-        if not paused then seek("toggle") end
-        mp.osd_message(string.format("%s paused.", label_prefix), 3)
     else
         toggled = false
-        if not paused then resume("toggle") end
-        mp.osd_message(string.format("%s resumed.", label_prefix), 3)
+        resume("toggle")
+        if not auto then mp.osd_message(string.format("%s resumed.", label_prefix), 3) end
     end
-    if mode then filter_removed = true end
 end
 
 local function pause(_, bool)
     if bool then
-        paused = true
         seek("pause")
-        print_debug("stats")
+        print_debug(nil, "stats")
+        paused = true
     else
         paused = false
         if not toggled then resume("unpause") end
@@ -531,12 +540,11 @@ local function pause(_, bool)
 end
 
 function cleanup()
-    if not paused then print_debug("stats") end
+    if not paused then print_debug(nil, "stats") end
     mp.msg.info("Cleanup.")
     -- Unregister Events
+    observe_main_event(false)
     mp.unobserve_property(osd_size_change)
-    mp.unobserve_property(update_time_pos)
-    mp.unobserve_property(collect_metadata)
     mp.unregister_event(seek_event)
     mp.unregister_event(resume_event)
     mp.unobserve_property(pause)
@@ -562,17 +570,15 @@ local function on_start()
     source.y = (mp.get_property_number("height") - source.h) / 2
     source = compute_meta(source)
     source.applied, source.detected_total, source.last_seen = 1, 0, 0
-    stats.trusted[source.whxy] = source
-    applied = source
+    applied, stats.trusted[source.whxy] = source, source
     time_pos.current = mp.get_property_number("time-pos")
-    -- limit.up = math.ceil(mp.get_property_number("video-params/average-bpp") / 6) or 2 -- if slow (arithmetic on nil value)
+    -- limit.up = math.ceil(mp.get_property_number("video-params/average-bpp") / 6) -- if slow (arithmetic on nil value)
     -- Register Events
     mp.observe_property("osd-dimensions", "native", osd_size_change)
-    mp.observe_property("time-pos", "number", update_time_pos)
-    mp.observe_property(string.format("vf-metadata/%s", labels.cropdetect), "native", collect_metadata)
     mp.register_event("seek", seek_event)
     mp.register_event("playback-restart", resume_event)
     mp.observe_property("pause", "bool", pause)
+    if options.mode % 2 == 1 then on_toggle(true) end
 end
 
 mp.add_key_binding("C", "toggle_crop", on_toggle)
