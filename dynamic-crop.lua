@@ -32,16 +32,16 @@ require "mp.options"
 local options = {
     -- behavior
     mode = 4, -- [0-4] 0 disable, 1 on-demand, 2 single-start, 3 auto-manual, 4 auto-start.
-    start_delay = 0, -- Delay in seconds used to skip intro for mode 2 (single-start).
+    start_delay = 0, -- Delay in seconds used to skip intro.
     prevent_change_timer = 0,
     prevent_change_mode = 2,
     resize_windowed = true,
     fast_change_timer = 1,
     new_known_ratio_timer = 5,
     new_fallback_timer = 20, -- 0 disable or >= 'new_known_ratio_timer'.
-    ratios = {2.4, 2.39, 2.35, 2.2, 2, 1.85, 16 / 9, 1.5, 4 / 3, 1.25, 9 / 16},
+    ratios = {2.4, 2.39, 2.35, 2.2, 2, 1.85, 16 / 9, 5 / 3, 1.5, 4 / 3, 1.25, 9 / 16},
     deviation = 1, -- 0 for approved only a continuous metadata.
-    correction = 0.6, -- 0.6 equivalent to 60%.
+    correction = 0.6, -- 0.6 equivalent to 60%. -- TODO auto value with trusted meta
     -- filter, see https://ffmpeg.org/ffmpeg-filters.html#cropdetect for details.
     detect_limit = 24,
     detect_round = 2,
@@ -190,8 +190,8 @@ local function print_debug(meta, type_, label)
                                               table_.is_known_ratio))
                 end
             end
-            mp.msg.info("Buffer:", buffer.time_total, buffer.index_total, "|", buffer.time_known,
-                        buffer.index_known_ratio)
+            mp.msg.info("Buffer:", buffer.time_total, buffer.index_total, "|", buffer.count_diff, "|",
+                        buffer.time_known, buffer.index_known_ratio)
 
             for k, ref in pairs(buffer.ordered) do
                 if k == buffer.index_total - (buffer.index_known_ratio - 1) then
@@ -260,19 +260,17 @@ local function process_metadata(event, time_pos_)
 
     -- Buffer cycle
     if buffer.index_total == 0 or buffer.ordered[buffer.index_total][1] ~= collected then
-        table.insert(buffer.ordered, {collected, elapsed_time, time_pos_})
+        table.insert(buffer.ordered, {collected, elapsed_time})
         buffer.index_total = buffer.index_total + 1
         buffer.index_known_ratio = buffer.index_known_ratio + 1
     elseif last_collected == collected then
         local i = buffer.index_total
         buffer.ordered[i][2] = compute_float(buffer.ordered[i][2], elapsed_time, true)
-        buffer.ordered[i][3] = time_pos_
     end
     buffer.time_total = compute_float(buffer.time_total, elapsed_time, true)
     if buffer.index_known_ratio > 0 then buffer.time_known = compute_float(buffer.time_known, elapsed_time, true) end
 
     -- Check if a new meta can be approved
-    -- TODO add last time_pos in buffer.ordered[i][3]
     local new_ready = stats.buffer[collected.whxy] and
                           (collected.is_known_ratio and collected.detected_total >= options.new_known_ratio_timer or
                               fallback and not collected.is_known_ratio and collected.detected_total >=
@@ -369,6 +367,7 @@ local function process_metadata(event, time_pos_)
             stats.trusted[current.whxy] = current
             current.applied, current.last_seen = 1, current.detected_total
             stats.buffer[current.whxy] = nil
+            buffer.count_diff = buffer.count_diff - 1
         end
         if not time_pos.prevent or time_pos_ >= time_pos.prevent then
             osd_size_change(current.w > current.h)
@@ -387,15 +386,19 @@ local function process_metadata(event, time_pos_)
         if options.mode < 3 then on_toggle(true) end
     end
 
-    -- print("Buffer:", buffer.time_total, buffer.index_total, "|", buffer.time_known, buffer.index_known_ratio)
-    -- TODO if more than x different value
-    while buffer.time_known > options.new_known_ratio_timer + options.deviation do
+    -- print("Buffer:", buffer.time_total, buffer.index_total, "|", buffer.count_diff, "|", buffer.time_known,
+    --   buffer.index_known_ratio)
+    while buffer.count_diff > buffer.fps and buffer.index_known_ratio > 24 or buffer.time_known >
+        options.new_known_ratio_timer + options.deviation do
         local position = (buffer.index_total + 1) - buffer.index_known_ratio
         local ref = buffer.ordered[position][1]
         local buffer_time = buffer.ordered[position][2]
         if stats.buffer[ref.whxy] and ref.is_known_ratio then
             ref.detected_total = compute_float(ref.detected_total, buffer_time, false)
-            if ref.detected_total == 0 then stats.buffer[ref.whxy] = nil end
+            if ref.detected_total == 0 then
+                stats.buffer[ref.whxy] = nil
+                buffer.count_diff = buffer.count_diff - 1
+            end
         end
         buffer.index_known_ratio = buffer.index_known_ratio - 1
         if buffer.index_known_ratio == 0 then
@@ -407,17 +410,21 @@ local function process_metadata(event, time_pos_)
 
     local buffer_timer = options.new_fallback_timer
     if not fallback then buffer_timer = options.new_known_ratio_timer end
-    while buffer.time_total > buffer_timer + options.deviation do
+    while buffer.count_diff > buffer.fps and buffer.time_total > buffer.time_known or buffer.time_total > buffer_timer +
+        options.deviation do
         local ref = buffer.ordered[1][1]
         if stats.buffer[ref.whxy] and not ref.is_known_ratio then
             ref.detected_total = compute_float(ref.detected_total, buffer.ordered[1][2], false)
-            if ref.detected_total == 0 then stats.buffer[ref.whxy] = nil end
+            if ref.detected_total == 0 then
+                stats.buffer[ref.whxy] = nil
+                buffer.count_diff = buffer.count_diff - 1
+            end
         end
         buffer.time_total = compute_float(buffer.time_total, buffer.ordered[1][2], false)
         buffer.index_total = buffer.index_total - 1
         table.remove(buffer.ordered, 1)
     end
-    -- print("Buffer:", buffer.time_total, buffer.index_total, "|", buffer.time_known, buffer.index_known_ratio)
+    -- print("Buffer:", buffer.time_total, buffer.index_total, "|", buffer.count_diff, "|", buffer.time_known, buffer.index_known_ratio)
 
     local b_adjust_limit = adjust_limit(current)
     last_collected = collected
@@ -432,7 +439,7 @@ local function update_time_pos(_, time_pos_)
     if not time_pos.insert then time_pos.insert = time_pos.current end
 
     if in_progress or not collected.whxy or not time_pos.prev or filter_inserted or seeking or paused or toggled or
-        options.mode == 2 and time_pos_ < options.start_delay then return end
+        time_pos_ < options.start_delay then return end
 
     process_metadata("time_pos", time_pos.current)
     collectgarbage("step")
@@ -461,6 +468,7 @@ local function collect_metadata(_, table_)
             -- Init stats.buffer[whxy]
             if not stats.trusted[collected.whxy] and not stats.buffer[collected.whxy] then
                 stats.buffer[collected.whxy] = collected
+                buffer.count_diff = buffer.count_diff + 1
             elseif stats.trusted[collected.whxy] and collected.last_seen < 0 then
                 collected.last_seen = 0
             end
@@ -559,7 +567,7 @@ local function on_start()
         return
     end
     -- Init buffer, source, applied, stats.trusted
-    buffer = {ordered = {}, time_total = 0, time_known = 0, index_total = 0, index_known_ratio = 0}
+    buffer = {ordered = {}, time_total = 0, time_known = 0, index_total = 0, index_known_ratio = 0, count_diff = 0}
     limit = {current = options.detect_limit, step = 1, up = 2}
     collected, stats = {}, {trusted = {}, buffer = {}, trusted_offset = {x = {0}, y = {0}}}
     source = {
@@ -572,6 +580,11 @@ local function on_start()
     source.applied, source.detected_total, source.last_seen = 1, 0, 0
     applied, stats.trusted[source.whxy] = source, source
     time_pos.current = mp.get_property_number("time-pos")
+    if options.deviation == 0 then
+        buffer.fps = 2
+    else
+        buffer.fps = math.ceil(options.deviation / (1 / mp.get_property_number("container-fps")))
+    end
     -- limit.up = math.ceil(mp.get_property_number("video-params/average-bpp") / 6) -- if slow (arithmetic on nil value)
     -- Register Events
     mp.observe_property("osd-dimensions", "native", osd_size_change)
