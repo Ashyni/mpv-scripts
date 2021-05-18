@@ -43,8 +43,6 @@ SHIFT+C do:
 
 ## To-Do
 
-- Improve stabilization with trembling video (old film, medium quality video).
-- Handle high speed change (superior to buffer max size).
 - Documentation.
 
 ## Troubleshooting
