@@ -33,7 +33,7 @@ require "mp.options"
 local options = {
     -- behavior
     mode = 4, -- [0-4] 0 disable, 1 on-demand, 2 single-start, 3 auto-manual, 4 auto-start.
-    start_delay = 0, -- Delay in seconds used to skip intro.
+    start_delay = 0, -- delay in seconds used to skip intro.
     prevent_change_timer = 0,
     prevent_change_mode = 2,
     resize_windowed = true,
@@ -45,9 +45,9 @@ local options = {
     correction = 0.6, -- 0.6 equivalent to 60%. -- TODO auto value with trusted meta
     -- filter, see https://ffmpeg.org/ffmpeg-filters.html#cropdetect for details.
     detect_limit = 24,
-    detect_round = 2,
+    detect_round = 2, -- even number.
     detect_reset = 1, -- minimum 1.
-    detect_skip = 1, -- new ffmpeg build since 12/2020.
+    detect_skip = 1, -- minimum 1, default 2 (new ffmpeg build since 12/2020).
     -- verbose
     debug = false
 }

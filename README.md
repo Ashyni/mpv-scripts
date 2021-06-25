@@ -30,7 +30,7 @@ script=/storage/emulated/0/<any custom path you choose>/dynamic-crop.lua
 - Correction of random metadata to an already trusted one, this mostly help to get a fast aspect ratio change with dark/ambiguous scene.
 - Support asymmetric offset (Re-center video).
 - Auto adjust black threshold (cropdetect=limit).
-- Handle seeking/loading.
+- Handle seeking/loading and speed from 0.5 to 100.
 - Option to prevent aspect ratio change during a certain time (in scene changing back and forth in less than X seconds).
 - Allow deviation of continuous data required to approve new meta.
 
@@ -51,6 +51,8 @@ The first press maintains the cropping and disables the script, a second pressur
 If the script doesn't work, make sure mpv is build with the libavfilter `crop` and `cropdetect` by starting mpv with `./mpv --vf=help` or by adding at the #1 line in mpv.conf `vf=help` and check the log for `Available libavfilter filters:`.
 
 Also make sure mpv option `hwdec=` is `no`(default) or any `*-copy` ([doc](https://mpv.io/manual/stable/#options-hwdec)), or the video filters won't work.
+
+Collect the log by adding to mpv.conf, `log-file=C:\Users\<username>\AppData\Roaming\mpv\mpv.log -- Or any path you can find easily` 
 
 ## Download on phone
 
