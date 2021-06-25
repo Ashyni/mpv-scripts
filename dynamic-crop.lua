@@ -10,7 +10,8 @@ The workflow is as follows: First, it inserts the filter vf=lavfi=cropdetect. Af
 seconds, then w,h,x,y are gathered from the vf-metadata left by cropdetect.
 The cropdetect filter is removed immediately after and finally it inserts the filter vf=lavfi=crop=w:h:x:y.
 
-The default options can be overridden by adding script-opts-append=autocrop-<parameter>=<value> into mpv.conf
+The default options can be overridden by adding script-opts-append=<script_name>-<parameter>=<value> into mpv.conf
+    script-opts-append=dynamic_crop-mode=0
 
 List of available parameters (For default values, see <options>)：
 
