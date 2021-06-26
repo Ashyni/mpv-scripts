@@ -12,6 +12,7 @@ The cropdetect filter is removed immediately after and finally it inserts the fi
 
 The default options can be overridden by adding script-opts-append=<script_name>-<parameter>=<value> into mpv.conf
     script-opts-append=dynamic_crop-mode=0
+    script-opts-append=dynamic_crop-ratios=2.4 2.39 2 4/3 ("" aren't needed like below)
 
 List of available parameters (For default values, see <options>)：
 
@@ -40,7 +41,7 @@ local options = {
     fast_change_timer = 1,
     new_known_ratio_timer = 5,
     new_fallback_timer = 20, -- 0 disable or >= 'new_known_ratio_timer'.
-    ratios = {2.4, 2.39, 2.35, 2.2, 2, 1.85, 16 / 9, 5 / 3, 1.5, 4 / 3, 1.25, 9 / 16},
+    ratios = "2.4 2.39 2.35 2.2 2 1.85 16/9 5/3 1.5 4/3 1.25 9/16", -- list separated by space
     deviation = 1, -- 0 for approved only a continuous metadata.
     correction = 0.6, -- 0.6 equivalent to 60%. -- TODO auto value with trusted meta
     -- filter, see https://ffmpeg.org/ffmpeg-filters.html#cropdetect for details.
@@ -127,7 +128,8 @@ local function compute_meta(meta)
     meta.detected_total = 0
     -- Check aspect ratio
     if not meta.is_invalid and meta.w >= source.w * .9 or meta.h >= source.h * .9 then
-        for _, ratio in pairs(options.ratios) do
+        for ratio in string.gmatch(options.ratios, "%S+%s?") do
+            for a, b in string.gmatch(ratio, "(%d+)/(%d+)") do ratio = a / b end
             local height = math.floor((meta.w * 1 / ratio) + .5)
             if height % 2 == 0 and height == meta.h or height % 2 == 1 and
                 (height + 1 == meta.h or height - 1 == meta.h) then
@@ -194,13 +196,13 @@ local function print_debug(meta, type_, label)
             mp.msg.info("Buffer:", buffer.time_total, buffer.index_total, "|", buffer.count_diff, "|",
                         buffer.time_known, buffer.index_known_ratio)
 
-            for k, ref in pairs(buffer.ordered) do
-                if k == buffer.index_total - (buffer.index_known_ratio - 1) then
-                    print("-", k, ref[1], ref[1].whxy, ref[2], ref[3])
-                else
-                    print(k, ref[1], ref[1].whxy, ref[2], ref[3])
-                end
-            end
+            -- for k, ref in pairs(buffer.ordered) do
+            --     if k == buffer.index_total - (buffer.index_known_ratio - 1) then
+            --         print("-", k, ref[1], ref[1].whxy, ref[2], ref[3])
+            --     else
+            --         print(k, ref[1], ref[1].whxy, ref[2], ref[3])
+            --     end
+            -- end
         end
     end
 end
