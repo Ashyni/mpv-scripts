@@ -22,7 +22,7 @@ prevent_change_mode: [0-2] - 0 any, 1 keep-largest, 2 keep-lowest - The prevent_
 resize_windowed: [true/false] - False, prevents the window from being resized, but always applies cropping,
     this function always avoids the default behavior to resize the window at the source size, in windowed/maximized mode.
 
-deviation: seconds - Extra time may deviate from the majority collected to approve a new metadata (to validate: 6/6+2).
+deviation: seconds - Extra time to allow new metadata to be segmented instead of being continuous.
     to disable this, set 0.
 
 correction: [0.0-1] - Size minimum of collected meta (in percent based on source), to attempt a correction.
@@ -42,8 +42,8 @@ local options = {
     new_known_ratio_timer = 5,
     new_fallback_timer = 20, -- 0 disable or >= 'new_known_ratio_timer'.
     ratios = "2.4 2.39 2.35 2.2 2 1.85 16/9 5/3 1.5 4/3 1.25 9/16", -- list separated by space
-    deviation = 1, -- 0 for approved only a continuous metadata.
-    correction = 0.6, -- 0.6 equivalent to 60%. -- TODO auto value with trusted meta
+    deviation = 0.5, -- %, 0 for approved only a continuous metadata.
+    correction = 0.6, -- %, 0.6 equivalent to 60%. -- TODO auto value with trusted meta
     -- filter, see https://ffmpeg.org/ffmpeg-filters.html#cropdetect for details.
     detect_limit = 24,
     detect_round = 2, -- even number.
@@ -193,7 +193,7 @@ local function print_debug(meta, type_, label)
                                               table_.is_known_ratio))
                 end
             end
-            mp.msg.info("Buffer:", buffer.time_total, buffer.index_total, "|", buffer.count_diff, "|",
+            mp.msg.info("Buffer: T", buffer.time_total, buffer.index_total, "| count_diff:", buffer.count_diff, "| KR",
                         buffer.time_known, buffer.index_known_ratio)
 
             -- for k, ref in pairs(buffer.ordered) do
@@ -226,7 +226,9 @@ local function adjust_limit(meta)
         else
             limit.current = options.detect_limit
         end
-    elseif not meta.is_invalid and last_collected == collected then
+    elseif not meta.is_invalid and (last_collected == collected or math.abs(collected.w - last_collected.w) <= 2 and
+        math.abs(collected.h - last_collected.h) <= 2) then
+        -- math.abs <= 2 are there to help stabilize odd metadata
         limit.change = 0
     else
         -- Decrease limit
@@ -391,8 +393,8 @@ local function process_metadata(event, time_pos_)
 
     -- print("Buffer:", buffer.time_total, buffer.index_total, "|", buffer.count_diff, "|", buffer.time_known,
     --   buffer.index_known_ratio)
-    while buffer.count_diff > buffer.fps and buffer.index_known_ratio > 24 or buffer.time_known >
-        options.new_known_ratio_timer + options.deviation do
+    while buffer.count_diff > buffer.fps_known_ratio and buffer.index_known_ratio > 24 or buffer.time_known >
+        options.new_known_ratio_timer * (1 + options.deviation) do
         local position = (buffer.index_total + 1) - buffer.index_known_ratio
         local ref = buffer.ordered[position][1]
         local buffer_time = buffer.ordered[position][2]
@@ -413,8 +415,8 @@ local function process_metadata(event, time_pos_)
 
     local buffer_timer = options.new_fallback_timer
     if not fallback then buffer_timer = options.new_known_ratio_timer end
-    while buffer.count_diff > buffer.fps and buffer.time_total > buffer.time_known or buffer.time_total > buffer_timer +
-        options.deviation do
+    while buffer.count_diff > buffer.fps_fallback and buffer.time_total > buffer.time_known or buffer.time_total >
+        buffer_timer * (1 + options.deviation) do
         local ref = buffer.ordered[1][1]
         if stats.buffer[ref.whxy] and not ref.is_known_ratio then
             ref.detected_total = compute_float(ref.detected_total, buffer.ordered[1][2], false)
@@ -584,11 +586,15 @@ local function on_start()
     applied, stats.trusted[source.whxy] = source, source
     time_pos.current = mp.get_property_number("time-pos")
     if options.deviation == 0 then
-        buffer.fps = 2
+        buffer.fps_known_ratio, buffer.fps_fallback = 2, 2
     else
-        buffer.fps = math.ceil(options.deviation / (1 / mp.get_property_number("container-fps")))
+        buffer.fps_known_ratio = math.ceil(options.new_known_ratio_timer * options.deviation /
+                                               (1 / mp.get_property_number("container-fps")))
+        buffer.fps_fallback = math.ceil(options.new_fallback_timer * options.deviation /
+                                            (1 / mp.get_property_number("container-fps")))
+        print("buffer fps", buffer.fps_known_ratio, buffer.fps_fallback)
     end
-    -- limit.up = math.ceil(mp.get_property_number("video-params/average-bpp") / 6) -- if slow (arithmetic on nil value)
+    -- limit.up = math.ceil(mp.get_property_number("video-params/average-bpp") / 6) -- slow load (arithmetic on nil value)
     -- Register Events
     mp.observe_property("osd-dimensions", "native", osd_size_change)
     mp.register_event("seek", seek_event)
