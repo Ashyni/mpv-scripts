@@ -226,7 +226,7 @@ local function adjust_limit(meta)
         else
             limit.current = options.detect_limit
         end
-    elseif not meta.is_invalid and (last_collected == collected or math.abs(collected.w - last_collected.w) <= 2 and
+    elseif not meta.is_invalid and last_collected and (last_collected == collected or math.abs(collected.w - last_collected.w) <= 2 and
         math.abs(collected.h - last_collected.h) <= 2) then
         -- math.abs <= 2 are there to help stabilize odd metadata
         limit.change = 0
