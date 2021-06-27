@@ -22,7 +22,7 @@ prevent_change_mode: [0-2] - 0 any, 1 keep-largest, 2 keep-lowest - The prevent_
 resize_windowed: [true/false] - False, prevents the window from being resized, but always applies cropping,
     this function always avoids the default behavior to resize the window at the source size, in windowed/maximized mode.
 
-deviation: seconds - Extra time to allow new metadata to be segmented instead of being continuous.
+deviation: % in float e.g. 0.5 for 50% - Extra time to allow new metadata to be segmented instead of being continuous.
     to disable this, set 0.
 
 correction: [0.0-1] - Size minimum of collected meta (in percent based on source), to attempt a correction.
