@@ -41,7 +41,8 @@ local options = {
     fast_change_timer = 1,
     new_known_ratio_timer = 5,
     new_fallback_timer = 20, -- 0 disable or >= 'new_known_ratio_timer'.
-    ratios = "2.4 2.39 2.35 2.2 2 1.85 16/9 5/3 1.5 4/3 1.25 9/16", -- list separated by space
+    ratios = "2.4 2.39 2.35 2.2 2 1.85 16/9 5/3 1.5 4/3 1.25 9/16", -- list separated by space.
+    ratios_diff = 2, -- even number, pixel added to check the known ratio list.
     deviation = 0.5, -- %, 0 for approved only a continuous metadata.
     correction = 0.6, -- %, 0.6 equivalent to 60%. -- TODO auto value with trusted meta
     -- filter, see https://ffmpeg.org/ffmpeg-filters.html#cropdetect for details.
@@ -131,8 +132,7 @@ local function compute_meta(meta)
         for ratio in string.gmatch(options.ratios, "%S+%s?") do
             for a, b in string.gmatch(ratio, "(%d+)/(%d+)") do ratio = a / b end
             local height = math.floor((meta.w * 1 / ratio) + .5)
-            if height % 2 == 0 and height == meta.h or height % 2 == 1 and
-                (height + 1 == meta.h or height - 1 == meta.h) then
+            if math.abs(height - meta.h) <= options.ratios_diff + 1 then
                 meta.is_known_ratio = true
                 break
             end
@@ -337,7 +337,7 @@ local function process_metadata(event, time_pos_)
     end
     if stabilization then
         current = stabilization
-        print_debug(current, "detail", "\\ Stabilization")
+        print_debug(current, "detail", "\\ Stabilized")
     elseif corrected then
         print_debug(current, "detail", "\\ Corrected")
     end
@@ -592,7 +592,6 @@ local function on_start()
                                                (1 / mp.get_property_number("container-fps")))
         buffer.fps_fallback = math.ceil(options.new_fallback_timer * options.deviation /
                                             (1 / mp.get_property_number("container-fps")))
-        print("buffer fps", buffer.fps_known_ratio, buffer.fps_fallback)
     end
     -- limit.up = math.ceil(mp.get_property_number("video-params/average-bpp") / 6) -- slow load (arithmetic on nil value)
     -- Register Events
