@@ -33,15 +33,15 @@ require "mp.options"
 local options = {
     -- behavior
     mode = 4, -- [0-4] 0 disable, 1 on-demand, 2 single-start, 3 auto-manual, 4 auto-start.
-    start_delay = 0, -- delay in seconds used to skip intro.
-    prevent_change_timer = 0,
-    prevent_change_mode = 2,
+    start_delay = 0, -- delay in seconds used to skip intro (usefull with mode 2).
+    prevent_change_timer = 0, -- seconds
+    prevent_change_mode = 2, -- [0-2]
     resize_windowed = true,
-    fast_change_timer = 1,
-    new_known_ratio_timer = 5,
-    new_fallback_timer = 20, -- 0 disable or >= 'new_known_ratio_timer'.
+    fast_change_timer = 1, -- seconds
+    new_known_ratio_timer = 5, -- seconds
+    new_fallback_timer = 20, -- seconds, 0 disable or >= 'new_known_ratio_timer'.
     ratios = "2.4 2.39 2.35 2.2 2 1.85 16/9 5/3 1.5 4/3 1.25 9/16", -- list separated by space.
-    ratios_diff = 2, -- even number, pixel added to check the known ratio list.
+    ratios_extra_px = 2, -- even number, pixel added to check with the ratios list.
     segmentation = 0.5, -- %, 0 will approved only a continuous metadata (strict).
     correction = 0.6, -- %, -- TODO auto value with trusted meta
     -- filter, see https://ffmpeg.org/ffmpeg-filters.html#cropdetect for details.
@@ -131,7 +131,8 @@ local function compute_meta(meta)
         for ratio in string.gmatch(options.ratios, "%S+%s?") do
             for a, b in string.gmatch(ratio, "(%d+)/(%d+)") do ratio = a / b end
             local height = math.floor((meta.w * 1 / ratio) + .5)
-            if math.abs(height - meta.h) <= options.ratios_diff + 1 then
+            -- ratios_extra_px + 1 for odd meta
+            if math.abs(height - meta.h) <= options.ratios_extra_px + 1 then
                 meta.is_known_ratio = true
                 break
             end
