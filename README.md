@@ -26,13 +26,13 @@ script=/storage/emulated/0/<any custom path you choose>/dynamic-crop.lua
 ## Features
 
 - 5 mode available: 0 disable, 1 on-demand, 2 single-start, 3 auto-manual, 4 auto-start.
-- New cropping meta are validate with a known list of aspect ratio and `new_known_ratio_timer`, and without the list with `new_fallback_timer`.
+- The new metadata are validated with a known list of aspect ratio that allows a faster timing (option `new_known_ratio_timer`) then without it, must be a slower timing to avoid unwanted cropping `new_fallback_timer`.
 - Correction of random metadata to an already trusted one, this mostly help to get a fast aspect ratio change with dark/ambiguous scene.
 - Support asymmetric offset (Re-center video).
 - Auto adjust black threshold (cropdetect=limit, max is define by the option `detect_limit`).
-- Handle seeking/loading and speed from 0.5 to 100.
-- Option to prevent aspect ratio change during a certain time (in scene changing back and forth in less than X seconds).
+- Ability to prevent aspect ratio change during a certain time (option `prevent_change_timer` and `prevent_change_mode`).
 - Allows the segmentation of normally continuous data required to approve a new metadata (option `deviation`).
+- Handle seeking/loading and any change of speed handled by MPV.
 
 ## Shortcut 
 
