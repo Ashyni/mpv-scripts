@@ -6,9 +6,7 @@ It will automatically crop the video, when playback starts.
 Also It registers the key-binding "C" (shift+c). You can manually crop the video by pressing the "C" (shift+c) key.
 If the "C" key is pressed again, the crop filter is removed restoring playback to its original state.
 
-The workflow is as follows: First, it inserts the filter vf=lavfi=cropdetect. After <detect_seconds> (default is < 1)
-seconds, then w,h,x,y are gathered from the vf-metadata left by cropdetect.
-The cropdetect filter is removed immediately after and finally it inserts the filter vf=lavfi=crop=w:h:x:y.
+The workflow is as follows: TODO rewrite it.
 
 The default options can be overridden by adding script-opts-append=<script_name>-<parameter>=<value> into mpv.conf
     script-opts-append=dynamic_crop-mode=0
@@ -22,10 +20,11 @@ prevent_change_mode: [0-2] - 0 any, 1 keep-largest, 2 keep-lowest - The prevent_
 resize_windowed: [true/false] - False, prevents the window from being resized, but always applies cropping,
     this function always avoids the default behavior to resize the window at the source size, in windowed/maximized mode.
 
-deviation: % in float e.g. 0.5 for 50% - Extra time to allow new metadata to be segmented instead of being continuous.
+segmentation: % [0.0-n] e.g. 0.5 for 50% - Extra time to allow new metadata to be segmented instead of being continuous.
+    default, new_known_ratio_timer is validated with 5 / 7.5 sec and new_fallback_timer with 20 / 30 sec.
     to disable this, set 0.
 
-correction: [0.0-1] - Size minimum of collected meta (in percent based on source), to attempt a correction.
+correction: % [0.0-1] e.g. 0.6 for 60% - Size minimum of collected meta (in percent based on source), to attempt a correction.
     to disable this, set 1.
 ]] --
 require "mp.msg"
@@ -43,8 +42,8 @@ local options = {
     new_fallback_timer = 20, -- 0 disable or >= 'new_known_ratio_timer'.
     ratios = "2.4 2.39 2.35 2.2 2 1.85 16/9 5/3 1.5 4/3 1.25 9/16", -- list separated by space.
     ratios_diff = 2, -- even number, pixel added to check the known ratio list.
-    deviation = 0.5, -- %, 0 for approved only a continuous metadata.
-    correction = 0.6, -- %, 0.6 equivalent to 60%. -- TODO auto value with trusted meta
+    segmentation = 0.5, -- %, 0 will approved only a continuous metadata (strict).
+    correction = 0.6, -- %, -- TODO auto value with trusted meta
     -- filter, see https://ffmpeg.org/ffmpeg-filters.html#cropdetect for details.
     detect_limit = 24,
     detect_round = 2, -- even number.
@@ -394,7 +393,7 @@ local function process_metadata(event, time_pos_)
     -- print("Buffer:", buffer.time_total, buffer.index_total, "|", buffer.count_diff, "|", buffer.time_known,
     --   buffer.index_known_ratio)
     while buffer.count_diff > buffer.fps_known_ratio and buffer.index_known_ratio > 24 or buffer.time_known >
-        options.new_known_ratio_timer * (1 + options.deviation) do
+        options.new_known_ratio_timer * (1 + options.segmentation) do
         local position = (buffer.index_total + 1) - buffer.index_known_ratio
         local ref = buffer.ordered[position][1]
         local buffer_time = buffer.ordered[position][2]
@@ -416,7 +415,7 @@ local function process_metadata(event, time_pos_)
     local buffer_timer = options.new_fallback_timer
     if not fallback then buffer_timer = options.new_known_ratio_timer end
     while buffer.count_diff > buffer.fps_fallback and buffer.time_total > buffer.time_known or buffer.time_total >
-        buffer_timer * (1 + options.deviation) do
+        buffer_timer * (1 + options.segmentation) do
         local ref = buffer.ordered[1][1]
         if stats.buffer[ref.whxy] and not ref.is_known_ratio then
             ref.detected_total = compute_float(ref.detected_total, buffer.ordered[1][2], false)
@@ -585,12 +584,12 @@ local function on_start()
     source.applied, source.detected_total, source.last_seen = 1, 0, 0
     applied, stats.trusted[source.whxy] = source, source
     time_pos.current = mp.get_property_number("time-pos")
-    if options.deviation == 0 then
+    if options.segmentation == 0 then
         buffer.fps_known_ratio, buffer.fps_fallback = 2, 2
     else
-        buffer.fps_known_ratio = math.ceil(options.new_known_ratio_timer * options.deviation /
+        buffer.fps_known_ratio = math.ceil(options.new_known_ratio_timer * options.segmentation /
                                                (1 / mp.get_property_number("container-fps")))
-        buffer.fps_fallback = math.ceil(options.new_fallback_timer * options.deviation /
+        buffer.fps_fallback = math.ceil(options.new_fallback_timer * options.segmentation /
                                             (1 / mp.get_property_number("container-fps")))
     end
     -- limit.up = math.ceil(mp.get_property_number("video-params/average-bpp") / 6) -- slow load (arithmetic on nil value)
