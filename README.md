@@ -31,7 +31,7 @@ script=/storage/emulated/0/<any custom path you choose>/dynamic-crop.lua
 - Support asymmetric offset (Re-center video).
 - Auto adjust black threshold (cropdetect=limit, max is define by the option `detect_limit`).
 - Ability to prevent aspect ratio change during a certain time (option `prevent_change_timer` and `prevent_change_mode`).
-- Allows the segmentation of normally continuous data required to approve a new metadata (option `deviation`).
+- Allows the segmentation of normally continuous data required to approve a new metadata (option `segmentation`).
 - Handle seeking/loading and any change of speed handled by MPV.
 
 ## Shortcut 
