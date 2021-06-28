@@ -2,11 +2,11 @@
 
 Base on https://github.com/mpv-player/mpv/blob/master/TOOLS/lua/autocrop.lua.
 
-Script to "cropping" dynamically, hard-coded black bars detected with lavfi-cropdetect filter for Ultra Wide Screen (21:9) or any screen different from 16:9 (Phone/old TV).
+Script to "cropping" dynamically, hard-coded black bars detected with lavfi-cropdetect filter for Ultra Wide Screen or any screen (Smartphone/Tablet).
 
 ## Status
 
-It's now really stable, but can probably be improved for more edge case.
+It's now really stable, but can probably be improved to handle more case.
 
 ## Usage
 
@@ -29,10 +29,10 @@ script=/storage/emulated/0/<any custom path you choose>/dynamic-crop.lua
 - New cropping meta are validate with a known list of aspect ratio and `new_known_ratio_timer`, and without the list with `new_fallback_timer`.
 - Correction of random metadata to an already trusted one, this mostly help to get a fast aspect ratio change with dark/ambiguous scene.
 - Support asymmetric offset (Re-center video).
-- Auto adjust black threshold (cropdetect=limit).
+- Auto adjust black threshold (cropdetect=limit, max is define by the option `detect_limit`).
 - Handle seeking/loading and speed from 0.5 to 100.
 - Option to prevent aspect ratio change during a certain time (in scene changing back and forth in less than X seconds).
-- Allow deviation of continuous data required to approve new meta.
+- Allows the segmentation of normally continuous data required to approve a new metadata (option `deviation`).
 
 ## Shortcut 
 
@@ -52,9 +52,9 @@ If the script doesn't work, make sure mpv is build with the libavfilter `crop` a
 
 Also make sure mpv option `hwdec=` is `no`(default) or any `*-copy` ([doc](https://mpv.io/manual/stable/#options-hwdec)), or the video filters won't work.
 
-Collect the log by adding to mpv.conf, `log-file=C:\Users\<username>\AppData\Roaming\mpv\mpv.log -- Or any path you can find easily` 
+To collect the log, add to mpv.conf, `log-file=<any path you can find easily>` 
 
 ## Download on phone
 
 Use the Desktop mode with a navigator on this page to access the button `Code > Download Zip`.
-Or transfer it from a computer.
+Or transfer it from a computer or any other device.
