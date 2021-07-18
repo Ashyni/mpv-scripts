@@ -226,8 +226,9 @@ local function adjust_limit(meta)
         else
             limit.current = options.detect_limit
         end
-    elseif not meta.is_invalid and (last_collected == collected or last_collected and math.abs(collected.w - last_collected.w) <= 2 and
-        math.abs(collected.h - last_collected.h) <= 2) then
+    elseif not meta.is_invalid and
+        (last_collected == collected or last_collected and math.abs(collected.w - last_collected.w) <= 2 and
+            math.abs(collected.h - last_collected.h) <= 2) then
         -- math.abs <= 2 are there to help stabilize odd metadata
         limit.change = 0
     else
@@ -250,6 +251,20 @@ local function compute_float(number_1, number_2, increase)
     else
         return tonumber(string.format("%.3f", number_1 - number_2))
     end
+end
+
+local function check_stability(current_)
+    local found
+    if not current_.is_source and stats.trusted[current_.whxy] then
+        for _, table_ in pairs(stats.trusted) do
+            if current_ ~= table_ then
+                if (not found and table_.detected_total > current_.detected_total or found and table_.detected_total >
+                    found.detected_total) and math.abs(current_.w - table_.w) <= 4 and math.abs(current_.h - table_.h) <=
+                    4 then found = table_ end
+            end
+        end
+    end
+    return found
 end
 
 local function process_metadata(event, time_pos_)
@@ -325,18 +340,9 @@ local function process_metadata(event, time_pos_)
     if corrected then current = corrected end
 
     -- Stabilization
-    local stabilization
-    if not current.is_source and stats.trusted[current.whxy] then
-        for _, table_ in pairs(stats.trusted) do
-            if current ~= table_ then
-                if (not stabilization and table_.detected_total > current.detected_total or stabilization and
-                    table_.detected_total > stabilization.detected_total) and math.abs(current.w - table_.w) <= 4 and
-                    math.abs(current.h - table_.h) <= 4 then stabilization = table_ end
-            end
-        end
-    end
-    if stabilization then
-        current = stabilization
+    local stabilized = check_stability(current)
+    if stabilized then
+        current = stabilized
         print_debug(current, "detail", "\\ Stabilized")
     elseif corrected then
         print_debug(current, "detail", "\\ Corrected")
@@ -366,6 +372,7 @@ local function process_metadata(event, time_pos_)
                             trusted_offset_y and (confirmation or detect_source)
     if crop_filter then
         -- Apply cropping
+        local already_stable
         if stats.trusted[current.whxy] then
             current.applied = current.applied + 1
         else
@@ -373,22 +380,25 @@ local function process_metadata(event, time_pos_)
             current.applied, current.last_seen = 1, current.detected_total
             stats.buffer[current.whxy] = nil
             buffer.count_diff = buffer.count_diff - 1
+            if check_stability(current) then already_stable, current.applied = true, 0 end
         end
-        if not time_pos.prevent or time_pos_ >= time_pos.prevent then
-            osd_size_change(current.w > current.h)
-            mp.command(string.format("no-osd vf append @%s:lavfi-crop=%s", labels.crop, current.whxy))
-            print_debug(string.format("- Apply: %s", current.whxy))
-            if options.prevent_change_timer > 0 then
-                time_pos.prevent = nil
-                if (options.prevent_change_mode == 1 and (current.w > applied.w or current.h > applied.h) or
-                    options.prevent_change_mode == 2 and (current.w < applied.w or current.h < applied.h) or
-                    options.prevent_change_mode == 0) then
-                    time_pos.prevent = compute_float(time_pos_, options.prevent_change_timer, true)
+        if not already_stable then
+            if not time_pos.prevent or time_pos_ >= time_pos.prevent then
+                osd_size_change(current.w > current.h)
+                mp.command(string.format("no-osd vf append @%s:lavfi-crop=%s", labels.crop, current.whxy))
+                print_debug(string.format("- Apply: %s", current.whxy))
+                if options.prevent_change_timer > 0 then
+                    time_pos.prevent = nil
+                    if (options.prevent_change_mode == 1 and (current.w > applied.w or current.h > applied.h) or
+                        options.prevent_change_mode == 2 and (current.w < applied.w or current.h < applied.h) or
+                        options.prevent_change_mode == 0) then
+                        time_pos.prevent = compute_float(time_pos_, options.prevent_change_timer, true)
+                    end
                 end
             end
+            applied = current
+            if options.mode < 3 then on_toggle(true) end
         end
-        applied = current
-        if options.mode < 3 then on_toggle(true) end
     end
 
     -- print("Buffer:", buffer.time_total, buffer.index_total, "|", buffer.count_diff, "|", buffer.time_known,
