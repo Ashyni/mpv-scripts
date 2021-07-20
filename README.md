@@ -38,7 +38,7 @@ script=/storage/emulated/0/<any custom path you choose>/dynamic-crop.lua
 
 SHIFT+C do:
 
-The first press maintains the cropping and disables the script, a second pressure is necessary to restart the script. 
+The first press maintains the cropping and disables the script, a second pressure eliminates the cropping and a third pressure is necessary to restart the script. 
 - Mode = 1-2, single cropping on demand, stays active until a valid cropping is apply.
 - Mode = 3-4, enable / disable continuous cropping.
 
