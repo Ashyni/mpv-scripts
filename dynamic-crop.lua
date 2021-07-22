@@ -43,7 +43,7 @@ local options = {
     new_known_ratio_timer = 5, -- seconds
     new_fallback_timer = 20, -- seconds, 0 disable or >= 'new_known_ratio_timer'.
     ratios = "2.4 2.39 2.35 2.2 2 1.85 16/9 5/3 1.5 4/3 1.25 9/16", -- list separated by space.
-    ratios_extra_px = 2, -- even number, pixel added to check with the ratios list.
+    ratios_extra_px = 2, -- even number, pixel added to check with the ratios list and offsets.
     segmentation = 0.5, -- %, 0 will approved only a continuous metadata (strict).
     correction = 0.6, -- %, -- TODO auto value with trusted meta
     -- filter, see https://ffmpeg.org/ffmpeg-filters.html#cropdetect for details.
@@ -79,7 +79,9 @@ local fallback = options.new_fallback_timer >= options.new_known_ratio_timer
 local cropdetect_skip = string.format(":skip=%d", options.detect_skip)
 
 local function is_trusted_offset(offset, axis)
-    for _, v in pairs(stats.trusted_offset[axis]) do if offset == v then return true end end
+    for _, v in pairs(stats.trusted_offset[axis]) do
+        if math.abs(offset - v) <= options.ratios_extra_px then return true end
+    end
     return false
 end
 
@@ -128,6 +130,7 @@ local function compute_meta(meta)
     meta.is_source = meta.whxy == source.whxy or meta.w == source.rw and meta.h == source.rh and meta.offset.x == 0 and
                          meta.offset.y == 0
     meta.is_invalid = meta.h < 0 or meta.w < 0
+    meta.is_trusted_offsets = is_trusted_offset(meta.offset.x, "x") and is_trusted_offset(meta.offset.y, "y")
     meta.detected_total = 0
     -- Check aspect ratio
     if not meta.is_invalid and meta.w >= source.w * .9 or meta.h >= source.h * .9 then
@@ -300,7 +303,9 @@ local function process_metadata(event, time_pos_)
                               options.new_fallback_timer)
 
     -- Add Trusted Offset
-    if new_ready then
+    -- TODO slow down approval of new offset
+    if stats.buffer[collected.whxy] and fallback and collected.detected_total >= options.new_fallback_timer then
+        -- if new_ready then
         local add_new_offset = {}
         for _, axis in pairs({"x", "y"}) do
             add_new_offset[axis] = not collected.is_invalid and not is_trusted_offset(collected.offset[axis], axis)
@@ -381,6 +386,7 @@ local function process_metadata(event, time_pos_)
         else
             stats.trusted[current.whxy] = current
             current.applied, current.last_seen = 1, current.detected_total
+            current.is_trusted_offsets = true
             stats.buffer[current.whxy] = nil
             buffer.count_diff = buffer.count_diff - 1
             if check_stability(current) then already_stable, current.applied = true, 0 end
@@ -411,7 +417,7 @@ local function process_metadata(event, time_pos_)
         local position = (buffer.index_total + 1) - buffer.index_known_ratio
         local ref = buffer.ordered[position][1]
         local buffer_time = buffer.ordered[position][2]
-        if stats.buffer[ref.whxy] and ref.is_known_ratio then
+        if stats.buffer[ref.whxy] and ref.is_known_ratio and ref.is_trusted_offsets then
             ref.detected_total = compute_float(ref.detected_total, buffer_time, false)
             if ref.detected_total == 0 then
                 stats.buffer[ref.whxy] = nil
@@ -431,7 +437,7 @@ local function process_metadata(event, time_pos_)
     while buffer.count_diff > buffer.fps_fallback and buffer.time_total > buffer.time_known or buffer.time_total >
         buffer_timer * (1 + options.segmentation) do
         local ref = buffer.ordered[1][1]
-        if stats.buffer[ref.whxy] and not ref.is_known_ratio then
+        if stats.buffer[ref.whxy] and not (ref.is_known_ratio and ref.is_trusted_offsets) then
             ref.detected_total = compute_float(ref.detected_total, buffer.ordered[1][2], false)
             if ref.detected_total == 0 then
                 stats.buffer[ref.whxy] = nil
