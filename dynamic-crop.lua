@@ -6,7 +6,9 @@ It will automatically crop the video, when playback starts.
 Also It registers the key-binding "C" (shift+c). You can manually crop the video by pressing the "C" (shift+c) key.
 If the "C" key is pressed again, the crop filter is removed restoring playback to its original state.
 
-The workflow is as follows: TODO rewrite it.
+The workflow is as follows: We observe two main events, vf-metadata and time-pos changes.
+    vf-metadata are stored sequentially in buffer with time-pos being updated at every frame,
+    then process to check and store trusted values to speed up future change for the current video only.
 
 The default options can be overridden by adding script-opts-append=<script_name>-<parameter>=<value> into mpv.conf
     script-opts-append=dynamic_crop-mode=0
@@ -88,9 +90,10 @@ local function is_filter_present(label)
 end
 
 local function is_cropable()
-    local vid = mp.get_property_native("vid")
-    local is_album = vid and mp.get_property_native(string.format("track-list/%s/albumart", vid)) or false
-    return vid and not is_album
+    for _, track in pairs(mp.get_property_native('track-list')) do
+        if track.type == 'video' and track.selected then return not track.albumart end
+    end
+    return false
 end
 
 local function remove_filter(label)
@@ -492,7 +495,7 @@ local function collect_metadata(_, table_)
     end
 end
 
-local function observe_main_event(observe)
+local function observe_main_events(observe)
     if observe then
         mp.observe_property(string.format("vf-metadata/%s", labels.cropdetect), "native", collect_metadata)
         mp.observe_property("time-pos", "number", update_time_pos)
@@ -506,14 +509,14 @@ end
 
 local function seek(name)
     print_debug(string.format("Stop by %s event.", name))
-    observe_main_event(false)
+    observe_main_events(false)
     time_pos = {}
     collected = {}
 end
 
 local function resume(name)
     print_debug(string.format("Resume by %s event.", name))
-    observe_main_event(true)
+    observe_main_events(true)
 end
 
 local function seek_event(event, id, error)
@@ -566,7 +569,7 @@ function cleanup()
     if not paused then print_debug(nil, "stats") end
     mp.msg.info("Cleanup.")
     -- Unregister Events
-    observe_main_event(false)
+    observe_main_events(false)
     mp.unobserve_property(osd_size_change)
     mp.unregister_event(seek_event)
     mp.unregister_event(resume_event)
