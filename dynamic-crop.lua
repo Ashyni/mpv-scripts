@@ -23,7 +23,7 @@ resize_windowed: [true/false] - False, prevents the window from being resized, b
     this function always avoids the default behavior to resize the window at the source size, in windowed/maximized mode.
 
 segmentation: % [0.0-n] e.g. 0.5 for 50% - Extra time to allow new metadata to be segmented instead of being continuous.
-    default, new_known_ratio_timer is validated with 5 / 7.5 sec and new_fallback_timer with 20 / 30 sec.
+    default, new_known_ratio_timer is validated with 5/7.5 sec and new_fallback_timer with 20/30 sec.
     to disable this, set 0.
 
 correction: % [0.0-1] e.g. 0.6 for 60% - Size minimum of collected meta (in percent based on source), to attempt a correction.
@@ -303,7 +303,6 @@ local function process_metadata(event, time_pos_)
                               options.new_fallback_timer)
 
     -- Add Trusted Offset
-    -- TODO slow down approval of new offset
     if stats.buffer[collected.whxy] and fallback and collected.detected_total >= options.new_fallback_timer then
         -- if new_ready then
         local add_new_offset = {}
@@ -516,8 +515,7 @@ end
 local function seek(name)
     print_debug(string.format("Stop by %s event.", name))
     observe_main_events(false)
-    time_pos = {}
-    collected = {}
+    time_pos, collected = {}, {}
 end
 
 local function resume(name)
@@ -529,8 +527,7 @@ local function seek_event(event, id, error)
     seeking = true
     if not paused then
         print_debug(string.format("Stop by %s event.", event["event"]))
-        time_pos = {}
-        collected = {}
+        time_pos, collected = {}, {}
     end
 end
 
@@ -591,26 +588,26 @@ local function on_start()
         return
     end
     -- Init buffer, source, applied, stats.trusted
+    local w, h = mp.get_property_number("width"), mp.get_property_number("height")
     buffer = {ordered = {}, time_total = 0, time_known = 0, index_total = 0, index_known_ratio = 0, count_diff = 0}
     limit = {current = options.detect_limit, step = 1, up = 2}
     collected, stats = {}, {trusted = {}, buffer = {}, trusted_offset = {x = {0}, y = {0}}}
     source = {
-        w = math.floor(mp.get_property_number("width") / options.detect_round) * options.detect_round,
-        h = math.floor(mp.get_property_number("height") / options.detect_round) * options.detect_round
+        w = math.floor(w / options.detect_round) * options.detect_round,
+        h = math.floor(h / options.detect_round) * options.detect_round
     }
-    source.x = (mp.get_property_number("width") - source.w) / 2
-    source.y = (mp.get_property_number("height") - source.h) / 2
+    source.x, source.y = (w - source.w) / 2, (h - source.h) / 2
     source = compute_meta(source)
     source.applied, source.detected_total, source.last_seen = 1, 0, 0
     applied, stats.trusted[source.whxy] = source, source
     time_pos.current = mp.get_property_number("time-pos")
+    -- value to keep the buffer size low when to much different meta are in it.
     if options.segmentation == 0 then
         buffer.fps_known_ratio, buffer.fps_fallback = 2, 2
     else
-        buffer.fps_known_ratio = math.ceil(options.new_known_ratio_timer * options.segmentation /
-                                               (1 / mp.get_property_number("container-fps")))
-        buffer.fps_fallback = math.ceil(options.new_fallback_timer * options.segmentation /
-                                            (1 / mp.get_property_number("container-fps")))
+        local seg_fps = options.segmentation / (1 / mp.get_property_number("container-fps"))
+        buffer.fps_known_ratio = math.ceil(options.new_known_ratio_timer * seg_fps)
+        buffer.fps_fallback = math.ceil(options.new_fallback_timer * seg_fps)
     end
     -- limit.up = math.ceil(mp.get_property_number("video-params/average-bpp") / 6) -- slow load (arithmetic on nil value)
     -- Register Events
