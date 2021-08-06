@@ -190,7 +190,7 @@ local function print_debug(meta, type_, label)
             if stats.trusted[whxy] then
                 mp.msg.info(string.format("%s | offX=%s offY=%s | applied=%s detected_total=%s last=%s", whxy,
                                           table_.offset.x, table_.offset.y, table_.applied,
-                                          table_.detected_total / 1000, table_.last_seen))
+                                          table_.detected_total / 1000, table_.last_seen / 1000))
             end
         end
         if options.debug then
