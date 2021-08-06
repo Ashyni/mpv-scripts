@@ -155,7 +155,6 @@ local function osd_size_change(orientation)
     local osd = mp.get_property_native("osd-dimensions")
     if prop_fullscreen == "no" then
         -- keep window width or height to avoid reset to source size when cropping
-        -- print("osd-width:", osd.w, "osd-height:", osd.h, "margin:", osd.mt, osd.mb, osd.ml, osd.mr)
         if prop_maximized == "yes" or not options.resize_windowed then
             mp.set_property("geometry", string.format("%sx%s", osd.w, osd.h))
         else
@@ -204,14 +203,6 @@ local function print_debug(meta, type_, label)
             mp.msg.info("Buffer - total: " .. buffer.index_total,
                         buffer.time_total / 1000 .. "sec, unique meta: " .. buffer.unique_meta .. ", known ratio:",
                         buffer.index_known_ratio, buffer.time_known / 1000 .. "sec")
-
-            -- for k, ref in pairs(buffer.ordered) do
-            --     if k == buffer.index_total - (buffer.index_known_ratio - 1) then
-            --         print("-", k, ref[1], ref[1].whxy, ref[2], ref[3])
-            --     else
-            --         print(k, ref[1], ref[1].whxy, ref[2], ref[3])
-            --     end
-            -- end
         end
     end
 end
@@ -298,7 +289,6 @@ local function process_metadata(event, time_pos_)
 
     -- add new offset to trusted list
     if stats.buffer[collected.whxy] and fallback and collected.detected_total >= new_fallback_timer then
-        -- if new_ready then
         local add_new_offset = {}
         for _, axis in pairs({"x", "y"}) do
             add_new_offset[axis] = not collected.is_invalid and not is_trusted_offset(collected.offset[axis], axis)
@@ -314,20 +304,16 @@ local function process_metadata(event, time_pos_)
         local closest, in_between = {}, false
         for whxy in pairs(stats.trusted) do
             local diff = is_trusted_margin(whxy)
-            -- print_debug(string.format("\\ Search %s, %s %s %s %s, %s", whxy, diff.mt, diff.mb, diff.ml, diff.mr,
-            --   diff.count))
             -- check if we have the same position between two sets of margin
             if closest.whxy and closest.whxy ~= whxy and diff.count == closest.count and math.abs(diff.mt - diff.mb) ==
                 math.abs(closest.mt - closest.mb) and math.abs(diff.ml - diff.mr) == math.abs(closest.ml - closest.mr) then
                 in_between = true
-                -- print_debug(string.format("\\ Cancel %s, in between.", closest.whxy))
                 break
             end
             if not closest.whxy and diff.count >= 2 or closest.whxy and diff.count >= closest.count and diff.mt +
                 diff.mb <= closest.mt + closest.mb and diff.ml + diff.mr <= closest.ml + closest.mr then
                 closest.mt, closest.mb, closest.ml, closest.mr = diff.mt, diff.mb, diff.ml, diff.mr
                 closest.count, closest.whxy = diff.count, whxy
-                -- print_debug(string.format("  \\ Find %s", closest.whxy))
             end
         end
         -- check if the corrected data is already applied
@@ -401,8 +387,6 @@ local function process_metadata(event, time_pos_)
         end
     end
 
-    -- print("Buffer:", buffer.time_total, buffer.index_total, "|", buffer.unique_meta, "|", buffer.time_known,
-    --   buffer.index_known_ratio)
     while buffer.unique_meta > buffer.fps_known_ratio and buffer.index_known_ratio > 24 or buffer.time_known >
         new_known_ratio_timer * (1 + options.segmentation) do
         local position = (buffer.index_total + 1) - buffer.index_known_ratio
@@ -439,7 +423,6 @@ local function process_metadata(event, time_pos_)
         buffer.index_total = buffer.index_total - 1
         table.remove(buffer.ordered, 1)
     end
-    -- print("Buffer:", buffer.time_total, buffer.index_total, "|", buffer.unique_meta, "|", buffer.time_known, buffer.index_known_ratio)
 
     local b_adjust_limit = adjust_limit(current)
     last_collected = collected
@@ -602,7 +585,6 @@ local function on_start()
         buffer.fps_known_ratio = math.ceil(new_known_ratio_timer * seg_fps)
         buffer.fps_fallback = math.ceil(new_fallback_timer * seg_fps)
     end
-    -- limit.up = math.ceil(mp.get_property_number("video-params/average-bpp") / 6) -- slow load (arithmetic on nil value)
     -- register events
     mp.observe_property("osd-dimensions", "native", osd_size_change)
     mp.register_event("seek", seek_event)
