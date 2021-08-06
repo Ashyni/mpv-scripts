@@ -74,7 +74,11 @@ local labels = {
 local in_progress, seeking, paused, toggled, filter_missing, filter_inserted
 -- option
 local time_pos = {}
-local fallback = options.new_fallback_timer >= options.new_known_ratio_timer
+local prevent_change_timer = options.prevent_change_timer * 1000
+local fast_change_timer = options.fast_change_timer * 1000
+local new_known_ratio_timer = options.new_known_ratio_timer * 1000
+local new_fallback_timer = options.new_fallback_timer * 1000
+local fallback = new_fallback_timer >= new_known_ratio_timer
 local cropdetect_skip = string.format(":skip=%d", options.detect_skip)
 
 local function is_trusted_offset(offset, axis)
@@ -181,24 +185,25 @@ local function print_debug(meta, type_, label)
                 read_maj_offset[axis] = read_maj_offset[axis] .. v .. " "
             end
         end
-        mp.msg.info(string.format("Trusted Offset: X:%s Y:%s", read_maj_offset.x, read_maj_offset.y))
+        mp.msg.info(string.format("Trusted Offset - X:%s| Y:%s", read_maj_offset.x, read_maj_offset.y))
         for whxy, table_ in pairs(stats.trusted) do
             if stats.trusted[whxy] then
                 mp.msg.info(string.format("%s | offX=%s offY=%s | applied=%s detected_total=%s last=%s", whxy,
-                                          table_.offset.x, table_.offset.y, table_.applied, table_.detected_total,
-                                          table_.last_seen))
+                                          table_.offset.x, table_.offset.y, table_.applied,
+                                          table_.detected_total / 1000, table_.last_seen))
             end
         end
         if options.debug then
             if stats.buffer then
                 for whxy, table_ in pairs(stats.buffer) do
                     mp.msg.info(string.format("- %s | offX=%s offY=%s | detected_total=%s ratio=%s", whxy,
-                                              table_.offset.x, table_.offset.y, table_.detected_total,
+                                              table_.offset.x, table_.offset.y, table_.detected_total / 1000,
                                               table_.is_known_ratio))
                 end
             end
-            mp.msg.info("Buffer: T", buffer.time_total, buffer.index_total, "| count_diff:", buffer.count_diff, "| KR",
-                        buffer.time_known, buffer.index_known_ratio)
+            mp.msg.info("Buffer - total: " .. buffer.index_total,
+                        buffer.time_total / 1000 .. "sec, unique meta: " .. buffer.unique_meta .. ", known ratio:",
+                        buffer.index_known_ratio, buffer.time_known / 1000 .. "sec")
 
             -- for k, ref in pairs(buffer.ordered) do
             --     if k == buffer.index_total - (buffer.index_known_ratio - 1) then
@@ -249,14 +254,6 @@ local function adjust_limit(meta)
     return limit_current ~= limit.current
 end
 
-local function compute_float(number_1, number_2, increase)
-    if increase then
-        return tonumber(string.format("%.3f", number_1 + number_2))
-    else
-        return tonumber(string.format("%.3f", number_1 - number_2))
-    end
-end
-
 local function check_stability(current_)
     local found
     if not current_.is_source and stats.trusted[current_.whxy] then
@@ -275,12 +272,12 @@ local function process_metadata(event, time_pos_)
     -- prevent event race
     in_progress = true
 
-    local elapsed_time = compute_float(time_pos_, time_pos.insert, false)
+    local elapsed_time = time_pos_ - time_pos.insert
     print_debug(collected, "detail", "Collected")
     time_pos.insert = time_pos_
 
     -- increase detected_total
-    collected.detected_total = compute_float(collected.detected_total, elapsed_time, true)
+    collected.detected_total = collected.detected_total + elapsed_time
 
     -- buffer cycle
     if buffer.index_total == 0 or buffer.ordered[buffer.index_total][1] ~= collected then
@@ -289,19 +286,18 @@ local function process_metadata(event, time_pos_)
         buffer.index_known_ratio = buffer.index_known_ratio + 1
     elseif last_collected == collected then
         local i = buffer.index_total
-        buffer.ordered[i][2] = compute_float(buffer.ordered[i][2], elapsed_time, true)
+        buffer.ordered[i][2] = buffer.ordered[i][2] + elapsed_time
     end
-    buffer.time_total = compute_float(buffer.time_total, elapsed_time, true)
-    if buffer.index_known_ratio > 0 then buffer.time_known = compute_float(buffer.time_known, elapsed_time, true) end
+    buffer.time_total = buffer.time_total + elapsed_time
+    if buffer.index_known_ratio > 0 then buffer.time_known = buffer.time_known + elapsed_time end
 
     -- check if a new meta can be approved
     local new_ready = stats.buffer[collected.whxy] and
-                          (collected.is_known_ratio and collected.detected_total >= options.new_known_ratio_timer or
-                              fallback and not collected.is_known_ratio and collected.detected_total >=
-                              options.new_fallback_timer)
+                          (collected.is_known_ratio and collected.detected_total >= new_known_ratio_timer or fallback and
+                              not collected.is_known_ratio and collected.detected_total >= new_fallback_timer)
 
     -- add new offset to trusted list
-    if stats.buffer[collected.whxy] and fallback and collected.detected_total >= options.new_fallback_timer then
+    if stats.buffer[collected.whxy] and fallback and collected.detected_total >= new_fallback_timer then
         -- if new_ready then
         local add_new_offset = {}
         for _, axis in pairs({"x", "y"}) do
@@ -339,7 +335,6 @@ local function process_metadata(event, time_pos_)
             corrected = stats.trusted[closest.whxy]
         end
     end
-
     -- use corrected metadata as main data
     local current = collected
     if corrected then current = corrected end
@@ -357,22 +352,21 @@ local function process_metadata(event, time_pos_)
     for whxy, table_ in pairs(stats.trusted) do
         if whxy ~= current.whxy then
             if table_.last_seen > 0 then table_.last_seen = 0 end
-            table_.last_seen = compute_float(table_.last_seen, elapsed_time, false)
+            table_.last_seen = table_.last_seen - elapsed_time
         else
             if table_.last_seen < 0 then table_.last_seen = 0 end
-            table_.last_seen = compute_float(table_.last_seen, elapsed_time, true)
+            table_.last_seen = table_.last_seen + elapsed_time
         end
     end
 
     -- last check before add a new meta as trusted
     local detect_source = current.is_source and
                               (not corrected and last_collected == collected and limit.change == 1 or current.last_seen >=
-                                  options.fast_change_timer)
+                                  fast_change_timer)
     local trusted_offset_y = is_trusted_offset(current.offset.y, "y")
     local trusted_offset_x = is_trusted_offset(current.offset.x, "x")
     local confirmation = not current.is_source and
-                             (stats.trusted[current.whxy] and current.last_seen >= options.fast_change_timer or
-                                 new_ready)
+                             (stats.trusted[current.whxy] and current.last_seen >= fast_change_timer or new_ready)
     local crop_filter = not collected.is_invalid and applied.whxy ~= current.whxy and trusted_offset_x and
                             trusted_offset_y and (confirmation or detect_source)
     if crop_filter then
@@ -385,7 +379,7 @@ local function process_metadata(event, time_pos_)
             current.applied, current.last_seen = 1, current.detected_total
             current.is_trusted_offsets = true
             stats.buffer[current.whxy] = nil
-            buffer.count_diff = buffer.count_diff - 1
+            buffer.unique_meta = buffer.unique_meta - 1
             if check_stability(current) then already_stable, current.applied = true, 0 end
         end
         if not already_stable then
@@ -393,12 +387,12 @@ local function process_metadata(event, time_pos_)
                 osd_size_change(current.w > current.h)
                 mp.command(string.format("no-osd vf append @%s:lavfi-crop=%s", labels.crop, current.whxy))
                 print_debug(string.format("- Apply: %s", current.whxy))
-                if options.prevent_change_timer > 0 then
+                if prevent_change_timer > 0 then
                     time_pos.prevent = nil
                     if (options.prevent_change_mode == 1 and (current.w > applied.w or current.h > applied.h) or
                         options.prevent_change_mode == 2 and (current.w < applied.w or current.h < applied.h) or
                         options.prevent_change_mode == 0) then
-                        time_pos.prevent = compute_float(time_pos_, options.prevent_change_timer, true)
+                        time_pos.prevent = time_pos_ + prevent_change_timer
                     end
                 end
             end
@@ -407,45 +401,45 @@ local function process_metadata(event, time_pos_)
         end
     end
 
-    -- print("Buffer:", buffer.time_total, buffer.index_total, "|", buffer.count_diff, "|", buffer.time_known,
+    -- print("Buffer:", buffer.time_total, buffer.index_total, "|", buffer.unique_meta, "|", buffer.time_known,
     --   buffer.index_known_ratio)
-    while buffer.count_diff > buffer.fps_known_ratio and buffer.index_known_ratio > 24 or buffer.time_known >
-        options.new_known_ratio_timer * (1 + options.segmentation) do
+    while buffer.unique_meta > buffer.fps_known_ratio and buffer.index_known_ratio > 24 or buffer.time_known >
+        new_known_ratio_timer * (1 + options.segmentation) do
         local position = (buffer.index_total + 1) - buffer.index_known_ratio
         local ref = buffer.ordered[position][1]
         local buffer_time = buffer.ordered[position][2]
         if stats.buffer[ref.whxy] and ref.is_known_ratio and ref.is_trusted_offsets then
-            ref.detected_total = compute_float(ref.detected_total, buffer_time, false)
+            ref.detected_total = ref.detected_total - buffer_time
             if ref.detected_total == 0 then
                 stats.buffer[ref.whxy] = nil
-                buffer.count_diff = buffer.count_diff - 1
+                buffer.unique_meta = buffer.unique_meta - 1
             end
         end
         buffer.index_known_ratio = buffer.index_known_ratio - 1
         if buffer.index_known_ratio == 0 then
             buffer.time_known = 0
         else
-            buffer.time_known = compute_float(buffer.time_known, buffer_time, false)
+            buffer.time_known = buffer.time_known - buffer_time
         end
     end
 
-    local buffer_timer = options.new_fallback_timer
-    if not fallback then buffer_timer = options.new_known_ratio_timer end
-    while buffer.count_diff > buffer.fps_fallback and buffer.time_total > buffer.time_known or buffer.time_total >
+    local buffer_timer = new_fallback_timer
+    if not fallback then buffer_timer = new_known_ratio_timer end
+    while buffer.unique_meta > buffer.fps_fallback and buffer.time_total > buffer.time_known or buffer.time_total >
         buffer_timer * (1 + options.segmentation) do
         local ref = buffer.ordered[1][1]
         if stats.buffer[ref.whxy] and not (ref.is_known_ratio and ref.is_trusted_offsets) then
-            ref.detected_total = compute_float(ref.detected_total, buffer.ordered[1][2], false)
+            ref.detected_total = ref.detected_total - buffer.ordered[1][2]
             if ref.detected_total == 0 then
                 stats.buffer[ref.whxy] = nil
-                buffer.count_diff = buffer.count_diff - 1
+                buffer.unique_meta = buffer.unique_meta - 1
             end
         end
-        buffer.time_total = compute_float(buffer.time_total, buffer.ordered[1][2], false)
+        buffer.time_total = buffer.time_total - buffer.ordered[1][2]
         buffer.index_total = buffer.index_total - 1
         table.remove(buffer.ordered, 1)
     end
-    -- print("Buffer:", buffer.time_total, buffer.index_total, "|", buffer.count_diff, "|", buffer.time_known, buffer.index_known_ratio)
+    -- print("Buffer:", buffer.time_total, buffer.index_total, "|", buffer.unique_meta, "|", buffer.time_known, buffer.index_known_ratio)
 
     local b_adjust_limit = adjust_limit(current)
     last_collected = collected
@@ -453,10 +447,11 @@ local function process_metadata(event, time_pos_)
 end
 
 local function update_time_pos(_, time_pos_)
+    -- time_pos_ is %.3f
     if not time_pos_ then return end
 
     time_pos.prev = time_pos.current
-    time_pos.current = tonumber(string.format("%.3f", time_pos_))
+    time_pos.current = math.floor(time_pos_ * 1000)
     if not time_pos.insert then time_pos.insert = time_pos.current end
 
     if in_progress or not collected.whxy or not time_pos.prev or filter_inserted or seeking or paused or toggled or
@@ -489,7 +484,7 @@ local function collect_metadata(_, table_)
             -- init stats.buffer[whxy]
             if not stats.trusted[collected.whxy] and not stats.buffer[collected.whxy] then
                 stats.buffer[collected.whxy] = collected
-                buffer.count_diff = buffer.count_diff + 1
+                buffer.unique_meta = buffer.unique_meta + 1
             elseif stats.trusted[collected.whxy] and collected.last_seen < 0 then
                 collected.last_seen = 0
             end
@@ -587,7 +582,7 @@ local function on_start()
     end
     -- init source data
     local w, h = mp.get_property_number("width"), mp.get_property_number("height")
-    buffer = {ordered = {}, time_total = 0, time_known = 0, index_total = 0, index_known_ratio = 0, count_diff = 0}
+    buffer = {ordered = {}, time_total = 0, time_known = 0, index_total = 0, index_known_ratio = 0, unique_meta = 0}
     limit = {current = options.detect_limit, step = 1, up = 2}
     collected, stats = {}, {trusted = {}, buffer = {}, trusted_offset = {x = {0}, y = {0}}}
     source = {
@@ -604,8 +599,8 @@ local function on_start()
         buffer.fps_known_ratio, buffer.fps_fallback = 2, 2
     else
         local seg_fps = options.segmentation / (1 / mp.get_property_number("container-fps"))
-        buffer.fps_known_ratio = math.ceil(options.new_known_ratio_timer * seg_fps)
-        buffer.fps_fallback = math.ceil(options.new_fallback_timer * seg_fps)
+        buffer.fps_known_ratio = math.ceil(new_known_ratio_timer * seg_fps)
+        buffer.fps_fallback = math.ceil(new_fallback_timer * seg_fps)
     end
     -- limit.up = math.ceil(mp.get_property_number("video-params/average-bpp") / 6) -- slow load (arithmetic on nil value)
     -- register events
