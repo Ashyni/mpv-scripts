@@ -37,17 +37,17 @@ local options = {
     mode = 4, -- [0-4] 0 disable, 1 on-demand, 2 single-start, 3 auto-manual, 4 auto-start
     start_delay = 0, -- delay in seconds used to skip intro (usefull with mode 2)
     prevent_change_timer = 0, -- seconds
-    prevent_change_mode = 2, -- [0-2]
+    prevent_change_mode = 2, -- [0-2], disable with 'prevent_change_timer = 0'
     resize_windowed = true,
     fast_change_timer = 1, -- seconds
     new_known_ratio_timer = 5, -- seconds
-    new_fallback_timer = 20, -- seconds, 0 disable or >= 'new_known_ratio_timer'
+    new_fallback_timer = 20, -- seconds, >= 'new_known_ratio_timer', disable with 0
     ratios = "2.4 2.39 2.35 2.2 2 1.85 16/9 5/3 1.5 4/3 1.25 9/16", -- list separated by space
     ratios_extra_px = 2, -- even number, pixel added to check with the ratios list and offsets
     segmentation = 0.5, -- %, 0 will approved only a continuous metadata (strict)
     correction = 0.6, -- %, -- TODO auto value with trusted meta
     -- filter, see https://ffmpeg.org/ffmpeg-filters.html#cropdetect for details
-    detect_limit = 24,
+    detect_limit = 24, -- is the maximum use, increase it slowly if lighter black are present
     detect_round = 2, -- even number
     detect_reset = 1, -- minimum 1
     detect_skip = 1, -- minimum 1, default 2 (new ffmpeg build since 12/2020)
@@ -139,8 +139,7 @@ local function compute_meta(meta)
         for ratio in string.gmatch(options.ratios, "%S+%s?") do
             for a, b in string.gmatch(ratio, "(%d+)/(%d+)") do ratio = a / b end
             local height = math.floor((meta.w * 1 / ratio) + .5)
-            -- ratios_extra_px + 1 for odd meta
-            if math.abs(height - meta.h) <= options.ratios_extra_px + 1 then
+            if math.abs(height - meta.h) <= options.ratios_extra_px + 1 then -- ratios_extra_px + 1 for odd meta
                 meta.is_known_ratio = true
                 break
             end
@@ -175,7 +174,7 @@ local function print_debug(meta, type_, label)
         end
         if not type_ then print(meta) end
     end
-    -- debug stats
+
     if type_ == "stats" and stats.trusted then
         mp.msg.info("Meta Stats:")
         local read_maj_offset = {x = "", y = ""}
@@ -218,21 +217,18 @@ end
 
 local function adjust_limit(meta)
     local limit_current = limit.current
-    if meta.is_source then
-        -- increase limit
+    if meta.is_source then -- increase limit
         limit.change = 1
         if limit.current + limit.step * limit.up <= options.detect_limit then
             limit.current = limit.current + limit.step * limit.up
         else
             limit.current = options.detect_limit
         end
-    elseif not meta.is_invalid and
+    elseif not meta.is_invalid and -- stable limit
         (last_collected == collected or last_collected and math.abs(collected.w - last_collected.w) <= 2 and
-            math.abs(collected.h - last_collected.h) <= 2) then
-        -- math.abs <= 2 are there to help stabilize odd metadata
+            math.abs(collected.h - last_collected.h) <= 2) then -- math.abs <= 2 to help stabilize odd metadata
         limit.change = 0
-    else
-        -- decrease limit
+    else -- decrease limit
         limit.change = -1
         if limit.current > 0 then
             if limit.current - limit.step >= 0 then
@@ -260,17 +256,15 @@ local function check_stability(current_)
 end
 
 local function process_metadata(event, time_pos_)
-    -- prevent event race
-    in_progress = true
+    in_progress = true -- prevent event race
 
     local elapsed_time = time_pos_ - time_pos.insert
     print_debug(collected, "detail", "Collected")
     time_pos.insert = time_pos_
 
-    -- increase detected_total
     collected.detected_total = collected.detected_total + elapsed_time
 
-    -- buffer cycle
+    -- add collected meta to the buffer
     if buffer.index_total == 0 or buffer.ordered[buffer.index_total][1] ~= collected then
         table.insert(buffer.ordered, {collected, elapsed_time})
         buffer.index_total = buffer.index_total + 1
@@ -282,12 +276,7 @@ local function process_metadata(event, time_pos_)
     buffer.time_total = buffer.time_total + elapsed_time
     if buffer.index_known_ratio > 0 then buffer.time_known = buffer.time_known + elapsed_time end
 
-    -- check if a new meta can be approved
-    local new_ready = stats.buffer[collected.whxy] and
-                          (collected.is_known_ratio and collected.detected_total >= new_known_ratio_timer or fallback and
-                              not collected.is_known_ratio and collected.detected_total >= new_fallback_timer)
-
-    -- add new offset to trusted list
+    -- add new offset to trusted_offset list
     if stats.buffer[collected.whxy] and fallback and collected.detected_total >= new_fallback_timer then
         local add_new_offset = {}
         for _, axis in pairs({"x", "y"}) do
@@ -346,6 +335,9 @@ local function process_metadata(event, time_pos_)
     end
 
     -- last check before add a new meta as trusted
+    local new_ready = stats.buffer[collected.whxy] and
+                          (collected.is_known_ratio and collected.detected_total >= new_known_ratio_timer or fallback and
+                              not collected.is_known_ratio and collected.detected_total >= new_fallback_timer)
     local detect_source = current.is_source and
                               (not corrected and last_collected == collected and limit.change == 1 or current.last_seen >=
                                   fast_change_timer)
@@ -355,8 +347,8 @@ local function process_metadata(event, time_pos_)
                              (stats.trusted[current.whxy] and current.last_seen >= fast_change_timer or new_ready)
     local crop_filter = not collected.is_invalid and applied.whxy ~= current.whxy and trusted_offset_x and
                             trusted_offset_y and (confirmation or detect_source)
+    -- apply crop
     if crop_filter then
-        -- apply crop
         local already_stable
         if stats.trusted[current.whxy] then
             current.applied = current.applied + 1
@@ -387,6 +379,7 @@ local function process_metadata(event, time_pos_)
         end
     end
 
+    -- cleanup buffer
     while buffer.unique_meta > buffer.fps_known_ratio and buffer.index_known_ratio > 24 or buffer.time_known >
         new_known_ratio_timer * (1 + options.segmentation) do
         local position = (buffer.index_total + 1) - buffer.index_known_ratio
@@ -424,6 +417,7 @@ local function process_metadata(event, time_pos_)
         table.remove(buffer.ordered, 1)
     end
 
+    -- auto limit
     local b_adjust_limit = adjust_limit(current)
     last_collected = collected
     if b_adjust_limit then insert_cropdetect_filter() end
@@ -563,7 +557,7 @@ local function on_start()
         mp.msg.warn("Exit, only works for videos.")
         return
     end
-    -- init source data
+    -- init/re-init source, buffer, limit and other data
     local w, h = mp.get_property_number("width"), mp.get_property_number("height")
     buffer = {ordered = {}, time_total = 0, time_known = 0, index_total = 0, index_known_ratio = 0, unique_meta = 0}
     limit = {current = options.detect_limit, step = 1, up = 2}
@@ -577,7 +571,7 @@ local function on_start()
     source.applied, source.detected_total, source.last_seen = 1, 0, 0
     applied, stats.trusted[source.whxy] = source, source
     time_pos.current = mp.get_property_number("time-pos")
-    -- value to keep the buffer size low when to much different meta are in it.
+    -- test to keep the size of the buffer low when too much meta are different
     if options.segmentation == 0 then
         buffer.fps_known_ratio, buffer.fps_fallback = 2, 2
     else
