@@ -175,7 +175,7 @@ local function print_debug(meta, type_, label)
         if not type_ then print(meta) end
     end
 
-    if type_ == "stats" and stats.trusted then
+    if type_ == "stats" and stats and stats.trusted then
         mp.msg.info("Meta Stats:")
         local read_maj_offset = {x = "", y = ""}
         for axis, _ in pairs(read_maj_offset) do
