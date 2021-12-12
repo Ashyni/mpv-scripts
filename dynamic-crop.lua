@@ -109,7 +109,7 @@ local function remove_filter(label)
 end
 
 local function insert_cropdetect_filter()
-    if toggled or paused or seeking then return end
+    if toggled or paused then return end
     -- "vf pre" cropdetect / "vf append" crop, in a proper order
     local function command()
         return mp.command(string.format("no-osd vf pre @%s:lavfi-cropdetect=limit=%d/255:round=%d:reset=%d%s",
