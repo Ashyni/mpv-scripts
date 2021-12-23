@@ -15,7 +15,7 @@ assignees: ''
  - Video Quality: [e.g. 1080p H.264]
 
 **Additional context**
-MPV configuration and others script/shaders used.
+MPV configuration and other scripts / shaders used.
 
 **Describe the bug**
 A clear and concise description of what the bug is.
