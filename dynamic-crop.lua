@@ -7,16 +7,19 @@ The workflow is as follows: We observe two main events, vf-metadata and time-pos
     then process to check and store trusted values to speed up future change for the current video.
     It will automatically crop the video as soon as a meta change is validated.
 
-Also It registers the key-binding "C" (shift+c) to control the script.
-The first press maintains the cropping and disables the script, a second pressure eliminates the cropping and a third pressure is necessary to restart the script.
-- Mode = 1-2, single cropping on demand, stays active until a valid cropping is apply.
-- Mode = 3-4, enable / disable continuous cropping.
-
 The default options can be overridden by adding script-opts-append=<script_name>-<parameter>=<value> into mpv.conf
     script-opts-append=dynamic_crop-mode=0
     script-opts-append=dynamic_crop-ratios=2.4 2.39 2 4/3 (quotes aren't needed like below)
 
 List of available parameters (For default values, see <options>)：
+
+mode: [0-4] 0 disable, 1 on-demand, 2 one-shot, 3 dynamic-manual, 4 dynamic-auto
+    The 1-3 mode requires using the shortcut to start, and 2-4 mode have an automatic start.
+Shortcut "C" (shift+c) to control the script.
+The first press maintains the cropping and disables the script, a second pressure eliminates the cropping 
+and a third pressure is necessary to restart the script.
+    Mode = 1-2, single cropping on demand, stays active until a valid cropping is apply.
+    Mode = 3-4, start / stop dynamic cropping.
 
 prevent_change_mode: [0-2] - 0 any, 1 keep-largest, 2 keep-lowest - The prevent_change_timer is trigger after a change,
     to disable this, set prevent_change_timer to 0.
@@ -37,7 +40,7 @@ require "mp.options"
 
 local options = {
     -- behavior
-    mode = 4, -- [0-4] 0 disable, 1 on-demand, 2 single-start, 3 auto-manual, 4 auto-start
+    mode = 4, -- [0-4] more details above.
     start_delay = 0, -- delay in seconds used to skip intro (usefull with mode 2)
     prevent_change_timer = 0, -- seconds
     prevent_change_mode = 2, -- [0-2], disable with 'prevent_change_timer = 0'

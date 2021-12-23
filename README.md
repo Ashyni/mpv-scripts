@@ -23,7 +23,7 @@ script=/storage/emulated/0/<any custom path you choose>/dynamic-crop.lua
 
 ## Features
 
-- 4 modes available: 0 disable, 1 on-demand, 2 single-start, 3 auto-manual, 4 auto-start.
+- 4 modes available: 0 disable, 1 on-demand, 2 one-shot, 3 dynamic-manual, 4 dynamic-auto.
 - The new metadata are validated with a known list of aspect ratio that allows a faster timer (option `new_known_ratio_timer`) then without it, must be a longer timing to avoid unwanted cropping (option `new_fallback_timer`).
 - Correction of random metadata to an already trusted one, this mostly help to get a fast aspect ratio change with dark/ambiguous scene.
 - Support asymmetric offset (Re-center video).
