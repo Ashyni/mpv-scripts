@@ -14,7 +14,7 @@ The default options can be overridden by adding script-opts-append=<script_name>
 List of available parameters (For default values, see <options>)：
 
 mode: [0-4] 0 disable, 1 on-demand, 2 one-shot, 3 dynamic-manual, 4 dynamic-auto
-    The 1-3 mode requires using the shortcut to start, and 2-4 mode have an automatic start.
+    Mode 1 and 3 requires using the shortcut to start, 2 and 4 have an automatic start.
 Shortcut "C" (shift+c) to control the script.
 The first press maintains the cropping and disables the script, a second pressure eliminates the cropping 
 and a third pressure is necessary to restart the script.
