@@ -252,9 +252,9 @@ local function check_stability(current_)
     if options.detect_round <= 4 and not current_.is_source and stats.trusted[current_.whxy] then
         for _, table_ in pairs(stats.trusted) do
             if current_ ~= table_ and
-                (not found and table_.time.overall > current_.time.overall * 1.1 or found and table_.time.overall >
-                    found.time.overall * 1.1) and math.abs(current_.w - table_.w) <= 4 and
-                math.abs(current_.h - table_.h) <= 4 then found = table_ end
+                (not found and table_.time.overall > current_.time.overall * 2 or found and table_.time.overall >
+                    found.time.overall) and math.abs(current_.w - table_.w) <= 4 and math.abs(current_.h - table_.h) <=
+                4 then found = table_ end
         end
     end
     return found
@@ -348,7 +348,7 @@ local function process_metadata(event, time_pos_)
     end
 
     -- last check before add a new meta as trusted
-    local new_ready = stats.buffer[collected.whxy] and
+    local new_ready = stats.buffer[collected.whxy] and not stats.trusted[collected.whxy] and
                           (collected.is_known_ratio and collected.time.buffer >= new_known_ratio_timer or fallback and
                               not collected.is_known_ratio and collected.time.buffer >= new_fallback_timer)
     local detect_source = current.is_source and
