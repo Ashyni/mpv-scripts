@@ -34,13 +34,16 @@ segmentation: % [0.0-n] e.g. 0.5 for 50% - Extra time to allow new metadata to b
 
 correction: % [0.0-1] e.g. 0.6 for 60% - Size minimum of collected meta (in percent based on source), to attempt a correction.
     to disable this, set 1.
+
+detect_skip: number of frames before the filter cropdetect return a metadata, some client experience a slow down during dark scene
+    caused by changing the limit used by the filter, increase this option help reduce the impact.
 ]] --
 require "mp.msg"
 require "mp.options"
 
 local options = {
     -- behavior
-    mode = 4, -- [0-4] more details above.
+    mode = 4, -- [0-4] more details above
     start_delay = 0, -- delay in seconds used to skip intro (usefull with mode 2)
     prevent_change_timer = 0, -- seconds
     prevent_change_mode = 2, -- [0-2], disable with 'prevent_change_timer = 0'
@@ -55,7 +58,7 @@ local options = {
     detect_limit = 26, -- is the maximum use, increase it slowly if lighter black are present
     detect_round = 2, -- even number
     detect_reset = 1, -- minimum 1
-    detect_skip = 1, -- minimum 1, default 2 (new ffmpeg build since 12/2020)
+    detect_skip = 2, -- mininum 1 (ffmpeg build since 12/2020), more details above
     -- verbose
     debug = false
 }
@@ -86,6 +89,11 @@ local new_known_ratio_timer = convert_sec_to_ms(options.new_known_ratio_timer)
 local new_fallback_timer = convert_sec_to_ms(options.new_fallback_timer)
 local fallback = new_fallback_timer >= new_known_ratio_timer
 local cropdetect_skip = string.format(":skip=%d", options.detect_skip)
+
+local function adjust_detect_skip(_, speed)
+    local skip = math.min(math.floor(options.detect_skip * speed), options.detect_skip * 4)
+    cropdetect_skip = string.format(":skip=%d", math.max(skip, 1))
+end
 
 local function is_trusted_offset(offset, axis)
     for _, v in pairs(stats.trusted_offset[axis]) do if math.abs(offset - v) <= 1 then return true end end
@@ -119,6 +127,7 @@ local function insert_cropdetect_filter()
     end
     if not command() then
         cropdetect_skip = ""
+        mp.unobserve_property(adjust_detect_skip)
         if not command() then
             mp.msg.error("Does vf=help as #1 line in mvp.conf return libavfilter list with crop/cropdetect in log?")
             filter_missing = true
@@ -186,6 +195,7 @@ local function print_debug(meta, type_, label)
                 read_maj_offset[axis] = read_maj_offset[axis] .. v .. " "
             end
         end
+        mp.msg.info(string.format("Limit min/max: %s/%s", limit.min, options.detect_limit))
         mp.msg.info(string.format("Trusted Offset - X:%s| Y:%s", read_maj_offset.x, read_maj_offset.y))
         for whxy, table_ in pairs(stats.trusted) do
             if stats.trusted[whxy] then
@@ -385,6 +395,9 @@ local function process_metadata(timestamp, collected)
         else
             limit.current = options.detect_limit
         end
+        -- store limit.min when reaching source
+        if limit.current < limit.min then limit.min = limit_current + 1 end
+        if limit_current + 1 >= limit.min then limit.timer = timestamp end
     elseif not current.is_invalid and -- stable limit
         (last_collected == collected or last_collected and math.abs(collected.w - last_collected.w) <= 2 and
             math.abs(collected.h - last_collected.h) <= 2) then -- math.abs <= 2 to help stabilize odd metadata
@@ -505,6 +518,7 @@ function cleanup()
     if not paused then print_debug(nil, "stats") end
     mp.msg.info("Cleanup.")
     mp.unregister_event(playback_events)
+    mp.unobserve_property(adjust_detect_skip)
     mp.unobserve_property(collect_metadata)
     mp.unobserve_property(update_time_pos)
     mp.unobserve_property(osd_size_change)
@@ -520,7 +534,7 @@ local function on_start()
     end
     -- init/re-init source, buffer, limit and other data
     buffer = {ordered = {}, time_total = 0, time_known = 0, index_total = 0, index_known_ratio = 0, unique_meta = 0}
-    limit = {current = options.detect_limit, step = 1, up = 2}
+    limit = {current = options.detect_limit, step = 1, up = 2, min = options.detect_limit}
     collected_, stats = {}, {trusted = {}, buffer = {}, trusted_offset = {x = {}, y = {}}}
     source = {w_untouched = mp.get_property_number("width"), h_untouched = mp.get_property_number("height")}
     source.w = math.floor(source.w_untouched / options.detect_round) * options.detect_round
@@ -538,6 +552,7 @@ local function on_start()
     mp.register_event("playback-restart", playback_events)
     mp.observe_property("pause", "bool", pause)
     mp.observe_property(string.format("vf-metadata/%s", labels.cropdetect), "native", collect_metadata)
+    mp.observe_property("speed", "number", adjust_detect_skip)
     mp.observe_property("time-pos", "number", update_time_pos)
     if options.mode % 2 == 1 then
         toggled = 3
