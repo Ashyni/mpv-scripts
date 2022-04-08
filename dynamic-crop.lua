@@ -92,7 +92,7 @@ local cropdetect_skip = string.format(":skip=%d", options.detect_skip)
 
 local function adjust_detect_skip(_, speed)
     local skip = math.min(math.floor(options.detect_skip * speed), options.detect_skip * 4)
-    cropdetect_skip = string.format(":skip=%d", math.max(skip, 1))
+    cropdetect_skip = string.format(":skip=%d", math.max(skip, options.detect_skip))
 end
 
 local function is_trusted_offset(offset, axis)
