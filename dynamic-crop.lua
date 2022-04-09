@@ -556,7 +556,6 @@ local function on_start()
     mp.observe_property("time-pos", "number", update_time_pos)
     if options.mode % 2 == 1 then
         toggled = 3
-        on_toggle(true)
     else
         toggled = 1
     end
