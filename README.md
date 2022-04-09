@@ -43,14 +43,21 @@ The first press maintains the cropping and disables the script, a second pressur
 ## To-Do
 
 - Improve Documentation.
+- Rework buffer to split fallback/offset validation and get more flexibility to turn off different timers.
+- Improve auto limit stability, to reduce impact on some client.
+- Find a way to work on data ahead to get perfect cropping timing (the dream).
 
 ## Troubleshooting
+
+To collect the log, add to mpv.conf, `log-file=<any path you can find easily>`
 
 If the script doesn't work, make sure mpv is build with the libavfilter `crop` and `cropdetect` by starting mpv with `./mpv --vf=help` or by adding at the #1 line in mpv.conf `vf=help` and check the log for `Available libavfilter filters:`.
 
 Also make sure mpv option `hwdec=` is `no`(default) or any `*-copy` ([doc](https://mpv.io/manual/stable/#options-hwdec)), or the video filters won't work.
 
-To collect the log, add to mpv.conf, `log-file=<any path you can find easily>` 
+Performance issue with Jellyfin Media Player/Qt client:
+JMP settings: Try with `UseOpenGL`
+Script settings: Increase option `detect_skip = 6` or `12`, check built-in doc
 
 ## Download on phone
 
