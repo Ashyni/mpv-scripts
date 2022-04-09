@@ -56,10 +56,10 @@ If the script doesn't work, make sure mpv is build with the libavfilter `crop` a
 Also make sure mpv option `hwdec=` is `no`(default) or any `*-copy` ([doc](https://mpv.io/manual/stable/#options-hwdec)), or the video filters won't work.
 
 Performance issue with Jellyfin Media Player/Qt client:
-JMP settings: Try with `UseOpenGL`
-Script settings: Increase option `detect_skip = 6` or `12`, check built-in doc
+    JMP settings: Try with `UseOpenGL`
+    Script settings: Increase option `detect_skip = 6` or `12`, check built-in doc
 
 ## Download on phone
 
 Use the Desktop mode with a navigator on this page to access the button `Code > Download Zip`.
-Or transfer it from a computer or any other device.
+    Or transfer it from a computer or any other device.
