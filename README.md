@@ -61,5 +61,5 @@ Script settings: Increase option `detect_skip = 6` or `12`, check built-in doc
 
 ## Download on phone
 
-Use the Desktop mode with a navigator on this page to access the button `Code > Download Zip`.
-    Or transfer it from a computer or any other device.
+Use the Desktop mode with a navigator on this page to access the button `Code > Download Zip`.  
+Or transfer it from a computer or any other device.
