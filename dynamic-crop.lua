@@ -402,9 +402,7 @@ local function process_metadata(timestamp, collected)
             math.abs(collected.h - last_collected.h) <= 2) then -- math.abs <= 2 to help stabilize odd metadata
         limit.change = 0
         -- reset limit to help with different dark color
-        if not current.is_trusted_offsets then
-            limit.current = options.detect_limit
-        end
+        if not current.is_trusted_offsets then limit.current = options.detect_limit end
     else -- decrease limit
         limit.change = -1
         if limit.current > 0 then
@@ -519,14 +517,15 @@ end
 
 function cleanup()
     if not paused then print_debug(nil, "stats") end
-    mp.msg.info("Cleanup.")
+    mp.msg.info("Cleanup ...")
     mp.unregister_event(playback_events)
     mp.unobserve_property(adjust_detect_skip)
     mp.unobserve_property(collect_metadata)
     mp.unobserve_property(update_time_pos)
     mp.unobserve_property(osd_size_change)
     mp.unobserve_property(pause)
-    for _, label in pairs(labels) do manage_filter("remove", label) end
+    for _, label in pairs(labels) do if filter_state(label) then manage_filter("remove", label) end end
+    mp.msg.info("Done.")
 end
 
 local function on_start()
