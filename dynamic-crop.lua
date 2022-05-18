@@ -80,8 +80,6 @@ local labels = {
 -- states (boolean)
 local in_progress, seeking, paused, toggled, filter_missing, filter_inserted
 -- computed options
-toggled = 1 -- 2/4 auto start
-if options.mode % 2 == 1 then toggled = 3 end -- 1/3 manual start
 local function convert_sec_to_ms(num) return math.floor(num * 1000) end
 local function convert_ms_to_sec(num) return num / 1000 end
 local prevent_change_timer = convert_sec_to_ms(options.prevent_change_timer)
@@ -586,6 +584,8 @@ local function on_start()
     mp.observe_property("pause", "bool", pause)
     mp.observe_property(string.format("vf-metadata/%s", labels.cropdetect), "native", collect_metadata)
     mp.observe_property("time-pos", "number", update_time_pos)
+    toggled = 1 -- 2/4 auto start
+    if options.mode % 2 == 1 then toggled = 3 end -- 1/3 manual start
 end
 
 mp.add_key_binding("C", "toggle_crop", on_toggle)
