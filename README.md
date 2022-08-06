@@ -25,7 +25,6 @@ script=/storage/emulated/0/<any custom path you choose>/dynamic-crop.lua
 ## Features
 
 -   4 modes available: 0 disable, 1 on-demand, 2 one-shot, 3 dynamic-manual, 4 dynamic-auto.
--   The new metadata are validated with a known list of aspect ratio that allows a faster timer (option `new_known_ratio_timer`) then without it, must be a longer timing to avoid unwanted cropping (option `new_fallback_timer`).
 -   Correction of random metadata to an already trusted one, this mostly help to get a fast aspect ratio change with dark/ambiguous scene.
 -   Support asymmetric offset (Re-center video).
 -   Auto adjust black threshold (cropdetect=limit, max is define by the option `detect_limit`).
@@ -44,9 +43,8 @@ The first press maintains the cropping and disables the script, a second pressur
 
 ## To-Do
 
--   Improve Documentation.
--   Improve the stability of the automatic limit, to reduce the impact caused by the insertion of the crop_detect filter.
--   Rework buffer to split fallback/offset validation and get more flexibility to turn off different timers.
+-   Improve documentation.
+-   Improve cropdetect on ffmpeg/mpv side to allow limit change at runtime without performance impact.
 -   Find a way to work on data ahead to get perfect cropping timing (the dream).
 
 ## Troubleshooting
@@ -57,13 +55,10 @@ If the script doesn't work, make sure mpv is build with the libavfilter `crop` a
 
 Also make sure mpv option `hwdec=` is `no`(default) or any `*-copy` ([doc](https://mpv.io/manual/stable/#options-hwdec)), otherwise the filters will not work.
 
-Performance issue with mpv client:  
-mpv.conf: Try different value for `gpu-api=` ([doc](https://mpv.io/manual/master/#options-gpu-api)).  
-Script settings: Increase option `detect_skip = 6` or `12`, check built-in doc.
-
-Performance issue with Jellyfin Media Player/Qt client:  
-JMP settings: Try with `UseOpenGL`.  
-Script settings: Increase option `detect_skip = 6` or `12`, check built-in doc.
+Performance issue with mpv client or specific gpu-api:  
+-   mpv.conf: Try different value for `gpu-api=` ([doc](https://mpv.io/manual/master/#options-gpu-api)).  
+-   Script settings: Increase option `limit_timer` to slow down limit change, main source of performance issue depending on gpi-api used.  
+-   JellyfinMediaPlayer settings: Try with `UseOpenGL`.
 
 ## Download on phone
 
