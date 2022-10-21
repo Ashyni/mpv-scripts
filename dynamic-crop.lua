@@ -165,7 +165,7 @@ end
 local function osd_size_change()
     -- TODO add auto/smart mode
     local prop_fullscreen = mp.get_property("fullscreen")
-    if prop_fullscreen == "yes" or options.fix_windowed_behavior == 0 then return end
+    if prop_fullscreen == "yes" or options.fix_windowed_behavior == 0 or toggled > 1 then return end
     local prop_maximized = mp.get_property("window-maximized")
     local osd = mp.get_property_native("osd-dimensions")
     if prop_maximized == "yes" or options.fix_windowed_behavior == 1 then -- keep current window size to avoid default behavior
