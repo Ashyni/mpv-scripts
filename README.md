@@ -25,27 +25,24 @@ script=/storage/emulated/0/<any custom path you choose>/dynamic-crop.lua
 ## Features
 
 -   4 modes available: 0 disable, 1 on-demand, 2 one-shot, 3 dynamic-manual, 4 dynamic-auto.
--   Correction of random metadata to an already trusted one, this mostly help to get a fast aspect ratio change with dark/ambiguous scene.
+-   Correction with trusted metadata for fast change in dark/ambiguous scene.
 -   Support asymmetric offset (Re-center video).
--   Auto adjust black threshold (cropdetect=limit, max is define by the option `detect_limit`).
--   Ability to prevent aspect ratio change during a certain time (option `prevent_change_timer` and `prevent_change_mode`).
--   Allows the segmentation of normally continuous data required to approve a new metadata (option `segmentation`).
+-   Auto adjust black threshold (cropdetect=limit).
+-   Ability to prevent aspect ratio change during a certain time.
+-   Allows the segmentation of normally continuous data required to approve a new metadata.
 -   Handle seeking/loading and any change of speed handled by MPV.
+-   Read ahead cropdetect filter metadata, useful for videos with multiple aspect ratio changes (require ffmpeg master/6+).
 
 ## Shortcut
 
 SHIFT+C do:
 
-The first press maintains the cropping and disables the script, a second pressure eliminates the cropping and a third pressure is necessary to restart the script.
-
--   Mode = 1-2, single cropping on demand, stays active until a valid cropping is apply.
--   Mode = 3-4, enable / disable continuous cropping.
+Cycle between ENABLE / DISABLE_WITH_CROP / DISABLE
 
 ## To-Do
 
 -   Improve documentation.
--   Improve cropdetect on ffmpeg/mpv side to allow limit change at runtime without performance impact.
--   Find a way to work on data ahead to get perfect cropping timing (the dream).
+-   Improve read_ahead.
 
 ## Troubleshooting
 
@@ -53,11 +50,11 @@ To collect the log, add to mpv.conf, `log-file=<any path you can find easily>`
 
 If the script doesn't work, make sure mpv is build with the libavfilter `crop` and `cropdetect` by starting mpv with `./mpv --vf=help` or by adding at the #1 line in mpv.conf `vf=help` and check the log for `Available libavfilter filters:`.
 
-Also make sure mpv option `hwdec=` is `no`(default) or any `*-copy` ([doc](https://mpv.io/manual/stable/#options-hwdec)), otherwise the filters will not work.
+Make sure mpv option `hwdec=` is `no`(default) or any `*-copy` ([doc](https://mpv.io/manual/stable/#options-hwdec)), otherwise the script will fail.
 
-Performance issue with mpv client or specific gpu-api:  
+Performance issue with mpv client or specific gpu-api (solved with [patch](https://github.com/FFmpeg/FFmpeg/commit/69c060bea21d3b4ce63b5fff40d37e98c70ab88f)):  
 -   mpv.conf: Try different value for `gpu-api=` ([doc](https://mpv.io/manual/master/#options-gpu-api)).  
--   Script settings: Increase option `limit_timer` to slow down limit change, main source of peformance issue depending on gpi-api used.  
+-   Script settings: Increase option `limit_timer` to slow down limit change, main source of performance issue depending on gpi-api used.  
 -   JellyfinMediaPlayer settings: Try with `UseOpenGL`.
 
 ## Download on phone
