@@ -730,6 +730,7 @@ local function pause(event, is_paused)
 end
 
 function cleanup()
+    if not s.started then return end
     if not s.paused then print_stats() end
     mp.msg.info("Cleanup...")
     mp.set_property("geometry", s.user_geometry)
@@ -741,6 +742,7 @@ function cleanup()
         if filter_state(label) then mp.commandv("vf", "remove", string.format("@%s", label)) end
     end
     mp.msg.info("Done.")
+    s.started = false
 end
 
 local function on_start()
@@ -789,6 +791,7 @@ local function on_start()
     mp.enable_messages('v')
     mp.register_event("log-message", collect_metadata)
     s.toggled = (options.mode % 2 == 1) and DISABLE or ENABLE
+    s.started = true -- everything ready
 end
 
 mp.add_key_binding("C", "toggle_crop", on_toggle)
