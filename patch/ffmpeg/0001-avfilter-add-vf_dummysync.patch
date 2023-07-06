@@ -1,25 +1,26 @@
-From a89270d389831323a16f784739d244b01ad4aeb3 Mon Sep 17 00:00:00 2001
+From 26d4fe44b4466c6707fa241340de354c66b419cc Mon Sep 17 00:00:00 2001
 From: Ashyni <jeffrey.c@tuta.io>
 Date: Thu, 9 Feb 2023 23:58:18 +0100
 Subject: [PATCH] avfilter: add vf_dummysync
 
-Signed-off-by: Ashyni <jeffrey.c@tuta.io>
 ---
- doc/filters.texi           |  15 +++++
+ doc/filters.texi           |  16 ++++-
  libavfilter/Makefile       |   1 +
  libavfilter/allfilters.c   |   1 +
  libavfilter/vf_dummysync.c | 123 +++++++++++++++++++++++++++++++++++++
- 4 files changed, 140 insertions(+)
+ 4 files changed, 139 insertions(+), 2 deletions(-)
  create mode 100644 libavfilter/vf_dummysync.c
 
 diff --git a/doc/filters.texi b/doc/filters.texi
-index 3a54c68f3e..4dada3f45e 100644
+index f17488c7c7..02867ceff4 100644
 --- a/doc/filters.texi
 +++ b/doc/filters.texi
-@@ -12559,6 +12559,21 @@ For more information about fontconfig, check:
+@@ -12941,8 +12941,20 @@ For more information about fontconfig, check:
  For more information about libfribidi, check:
  @url{http://fribidi.org/}.
  
+-For more information about libharfbuzz, check:
+-@url{https://github.com/harfbuzz/harfbuzz}.
 +@section dummysync
 +
 +This filter takes in input two input videos, the first input is considered
@@ -34,15 +35,14 @@ index 3a54c68f3e..4dada3f45e 100644
 +[in]split[main][dummy];[dummy]setpts=PTS-1/TB,cropdetect[dummy];
 +[main][dummy]dummysync[out]
 +@end example
-+
+ 
  @section edgedetect
  
- Detect and draw edges. The filter uses the Canny Edge Detection algorithm.
 diff --git a/libavfilter/Makefile b/libavfilter/Makefile
-index 0173b11870..f538477267 100644
+index 9b7813575a..65055803f3 100644
 --- a/libavfilter/Makefile
 +++ b/libavfilter/Makefile
-@@ -282,6 +282,7 @@ OBJS-$(CONFIG_DRAWBOX_FILTER)                += vf_drawbox.o
+@@ -289,6 +289,7 @@ OBJS-$(CONFIG_DRAWBOX_FILTER)                += vf_drawbox.o
  OBJS-$(CONFIG_DRAWGRAPH_FILTER)              += f_drawgraph.o
  OBJS-$(CONFIG_DRAWGRID_FILTER)               += vf_drawbox.o
  OBJS-$(CONFIG_DRAWTEXT_FILTER)               += vf_drawtext.o
@@ -51,10 +51,10 @@ index 0173b11870..f538477267 100644
  OBJS-$(CONFIG_ELBG_FILTER)                   += vf_elbg.o
  OBJS-$(CONFIG_ENTROPY_FILTER)                += vf_entropy.o
 diff --git a/libavfilter/allfilters.c b/libavfilter/allfilters.c
-index 9cdcca4853..26eca44ae5 100644
+index 9a7fadc58d..10c1b17c13 100644
 --- a/libavfilter/allfilters.c
 +++ b/libavfilter/allfilters.c
-@@ -260,6 +260,7 @@ extern const AVFilter ff_vf_drawbox;
+@@ -265,6 +265,7 @@ extern const AVFilter ff_vf_drawbox;
  extern const AVFilter ff_vf_drawgraph;
  extern const AVFilter ff_vf_drawgrid;
  extern const AVFilter ff_vf_drawtext;
@@ -192,5 +192,5 @@ index 0000000000..a0fdf97cea
 +                     AVFILTER_FLAG_METADATA_ONLY,
 +};
 -- 
-2.39.1
+2.41.0
 
