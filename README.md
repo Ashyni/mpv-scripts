@@ -54,7 +54,7 @@ Make sure mpv option `hwdec=` is `no`(default) or any `*-copy` ([doc](https://mp
 
 Performance issue with mpv client or specific gpu-api (solved with [patch](https://github.com/FFmpeg/FFmpeg/commit/69c060bea21d3b4ce63b5fff40d37e98c70ab88f)):  
 -   mpv.conf: Try different value for `gpu-api=` ([doc](https://mpv.io/manual/master/#options-gpu-api)).  
--   Script settings: Increase option `limit_timer` to slow down limit change, main source of performance issue depending on gpi-api used.  
+-   Script settings: Increase option `limit_timer` to slow down limit change, main source of performance issue depending on gpu-api used.  
 -   JellyfinMediaPlayer settings: Try with `UseOpenGL`.
 
 ## Download on phone
