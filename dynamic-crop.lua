@@ -72,6 +72,7 @@ local options = {
     read_ahead_mode = 0, -- [0-2], 0 disable, 1 fast_change_timer, 2 ratio_timer, more details above
     read_ahead_sync = 1, -- int/frame, increase for advance, more details above
     segmentation = 0.5, -- [0.0-1] %, 0 will approved only a continuous metadata (strict)
+    crop_method = 1, -- 0 lavfi-crop (ffmpeg/filter), 1 video-crop (mpv/VO)
     -- filter, see https://ffmpeg.org/ffmpeg-filters.html#cropdetect for details
     detect_limit = 26, -- is the maximum use, increase it slowly if lighter black are present
     detect_round = 2, -- even number
@@ -255,7 +256,9 @@ local function apply_crop(ref, pts)
     end
 
     -- crop filter insertion/update
-    if filter_state(labels.crop) and not s.seeking then
+    if s.f_video_crop then
+        mp.set_property("video-crop", string.format("%sx%s+%s+%s", ref.w, ref.h, ref.x, ref.y))
+    elseif filter_state(labels.crop) and not s.seeking then
         -- order "w""x" then "h""y" to try to avoid a visual glitch
         for _, axis in ipairs({"w", "x", "h", "y"}) do
             if s.applied[axis] ~= ref[axis] then command_filter(labels.crop, axis, ref[axis], "crop") end
@@ -656,7 +659,8 @@ local function seek(event)
         s.approved = s.applied -- re-sync
         if event == "seek" then
             if s.f_limit_runtime then insert_cropdetect_filter(s.limit.current) end
-            if filter_state(labels.crop, "enabled", true) or not filter_state(labels.crop) and s.applied ~= s.source then
+            if not s.f_video_crop and
+                (filter_state(labels.crop, "enabled", true) or not filter_state(labels.crop) and s.applied ~= s.source) then
                 apply_crop(s.applied)
             end
         end
@@ -704,8 +708,12 @@ function on_toggle(auto)
         if not auto then mp.osd_message(string.format("%s: disabled, crop remains.", label_prefix), 3) end
     elseif s.toggled == 2 then
         s.toggled = DISABLE
-        if filter_state(labels.crop, "enabled", true) and filter_state(labels.cropdetect, "enabled", false) then
-            mp.commandv("vf", EVENT, string.format("@%s", labels.crop))
+        if filter_state(labels.cropdetect, "enabled", false) then
+            if s.f_video_crop then
+                mp.set_property("video-crop", "0x0")
+            elseif filter_state(labels.crop, "enabled", true) then
+                mp.commandv("vf", EVENT, string.format("@%s", labels.crop))
+            end
         end
         if not auto then mp.osd_message(string.format("%s: crop removed.", label_prefix), 3) end
     else -- s.toggled == 3
@@ -713,7 +721,9 @@ function on_toggle(auto)
         if filter_state(labels.cropdetect, "enabled", false) then
             mp.commandv("vf", EVENT, string.format("@%s", labels.cropdetect))
         end
-        if filter_state(labels.crop, "enabled", false) then
+        if s.f_video_crop then
+            apply_crop(s.applied)
+        elseif filter_state(labels.crop, "enabled", false) then
             mp.commandv("vf", EVENT, string.format("@%s", labels.crop))
         end
         resume(EVENT)
@@ -750,6 +760,7 @@ function cleanup()
     for _, label in pairs(labels) do
         if filter_state(label) then mp.commandv("vf", "remove", string.format("@%s", label)) end
     end
+    if s.f_video_crop then mp.set_property("video-crop", "0x0") end
     mp.msg.info("Done.")
     s.started = false
 end
@@ -794,6 +805,7 @@ local function on_start()
                        mp.commandv("vf", "remove", string.format("@%s", label_prefix)) and "[a][b]dummysync" or
                        "[a][b]psnr=eof_action=pass"
     end
+    s.f_video_crop = options.crop_method == 1 and mp.get_property("video-crop") ~= nil -- true if supported
     -- register events
     mp.register_event("seek", playback_events)
     mp.register_event("playback-restart", playback_events)
