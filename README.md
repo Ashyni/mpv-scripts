@@ -25,6 +25,7 @@ script=/storage/emulated/0/<any custom path you choose>/dynamic-crop.lua
 ## Features
 
 -   4 modes available: 0 disable, 1 on-demand, 2 one-shot, 3 dynamic-manual, 4 dynamic-auto.
+-   Support hardware decoding with *-copy variant only (read_ahead_mode=1/2 required ffmpeg patch to avoid color issue)
 -   Correction with trusted metadata for fast change in dark/ambiguous scene.
 -   Support asymmetric offset (Re-center video).
 -   Auto adjust black threshold (cropdetect=limit).
