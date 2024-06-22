@@ -241,13 +241,19 @@ local function apply_crop(ref, pts)
     if prop_fullscreen ~= "yes" and options.fix_windowed_behavior ~= 0 then
         local prop_maximized = mp.get_property("window-maximized")
         local osd = mp.get_property_native("osd-dimensions")
-        if prop_maximized == "yes" or options.fix_windowed_behavior == 1 then
-            -- keep current window size to avoid resizing at the original size of the video
-            mp.set_property("geometry", string.format("%sx%s", osd.w, osd.h))
-        elseif options.fix_windowed_behavior == 2 then
-            mp.set_property("geometry", string.format("%s", osd.w))
-        elseif options.fix_windowed_behavior == 3 then
-            mp.set_property("geometry", string.format("x%s", osd.h))
+        local prop_auto_window_resize = mp.get_property("auto-window-resize")
+        if prop_maximized == "yes" then
+            if options.fix_windowed_behavior ~= 0 and prop_auto_window_resize == "yes" then
+                -- disable auto resize to avoid resizing at the original size of the video
+                mp.set_property("auto-window-resize", "no")
+            end
+        else
+            if options.fix_windowed_behavior ~= 0 then mp.set_property("auto-window-resize", "yes") end
+            if options.fix_windowed_behavior == 2 then
+                mp.set_property("geometry", string.format("%s", osd.w))
+            elseif options.fix_windowed_behavior == 3 then
+                mp.set_property("geometry", string.format("x%s", osd.h))
+            end
         end
     end
 
@@ -755,7 +761,12 @@ function cleanup()
     if not s.started then return end
     if not s.paused then print_stats() end
     mp.msg.info("Cleanup...")
-    mp.set_property("geometry", s.user_geometry)
+    local prop_fullscreen = mp.get_property("fullscreen")
+    local prop_maximized = mp.get_property("window-maximized")
+    if prop_fullscreen == "no" and prop_maximized == "no" then
+        mp.set_property("geometry", s.user_geometry)
+        mp.set_property("auto-window-resize", s.user_auto_window_resize)
+    end
     mp.unregister_event(playback_events)
     mp.unregister_event(collect_metadata)
     mp.unobserve_property(time_pos)
@@ -776,6 +787,10 @@ local function on_start()
         return
     end
     s.user_geometry = mp.get_property("geometry")
+    s.user_auto_window_resize = mp.get_property("auto-window-resize")
+    if options.fix_windowed_behavior == 1 and s.user_auto_window_resize == "yes" then
+        mp.set_property("auto-window-resize", "no")
+    end
     -- init/re-init stored data
     s.buffer = {i_to_shift = 0, i_total = 0, i_ratio = 0, indexed_list = {}, t_total = 0, t_ratio = 0}
     s.candidate = {i_fallback = 0, i_offset = 0, fallback = {}, offset = {}}
